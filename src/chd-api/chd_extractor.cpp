@@ -48,6 +48,14 @@ static std::string path_join(const std::string& dir, const std::string& file)
     return dir + "/" + file;
 }
 
+static std::string msf_from_frames(uint32_t frames)
+{
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%02u:%02u:%02u",
+                  frames / (75 * 60), (frames / 75) % 60, frames % 75);
+    return buf;
+}
+
 static const char* cue_track_type_string(TrackType trktype, uint32_t datasize)
 {
     switch (trktype)
@@ -89,13 +97,19 @@ public:
 
     void on_track_begin(uint32_t track_num, TrackType track_type,
                         bool is_audio, uint32_t data_size,
-                        uint32_t frames) override
+                        uint32_t frames,
+                        uint32_t pregap,
+                        uint32_t pgdatasize,
+                        uint32_t postgap) override
     {
         m_cur_track = track_num;
         m_cur_type = track_type;
         m_cur_audio = is_audio;
         m_cur_datasize = data_size;
         m_cur_toc_frames = frames;
+        m_cur_pregap = pregap;
+        m_cur_pgdatasize = pgdatasize;
+        m_cur_postgap = postgap;
         m_track_frames = 0;
 
         // Determine bin filename
@@ -161,7 +175,23 @@ public:
             std::snprintf(tnum, sizeof(tnum), "%02u", m_cur_track);
             m_meta << "  TRACK " << tnum << " "
                    << cue_track_type_string(m_cur_type, m_cur_datasize) << "\n";
-            m_meta << "    INDEX 01 00:00:00\n";
+            // Pregap handling (split-bin: each file starts at offset 0)
+            if (m_cur_pregap > 0 && m_cur_pgdatasize == 0)
+            {
+                m_meta << "    PREGAP " << msf_from_frames(m_cur_pregap) << "\n";
+                m_meta << "    INDEX 01 00:00:00\n";
+            }
+            else if (m_cur_pregap > 0 && m_cur_pgdatasize > 0)
+            {
+                m_meta << "    INDEX 00 00:00:00\n";
+                m_meta << "    INDEX 01 " << msf_from_frames(m_cur_pregap) << "\n";
+            }
+            else
+            {
+                m_meta << "    INDEX 01 00:00:00\n";
+            }
+            if (m_cur_postgap > 0)
+                m_meta << "    POSTGAP " << msf_from_frames(m_cur_postgap) << "\n";
         }
     }
 
@@ -183,6 +213,9 @@ private:
     bool m_cur_audio = false;
     uint32_t m_cur_datasize = 0;
     uint32_t m_cur_toc_frames = 0;
+    uint32_t m_cur_pregap = 0;
+    uint32_t m_cur_pgdatasize = 0;
+    uint32_t m_cur_postgap = 0;
     uint32_t m_track_frames = 0;
     uint32_t m_cur_logframeofs = 0;
     std::string m_cur_bin_name;
@@ -202,7 +235,8 @@ class RawFileSink : public ProcessorSink
 public:
     RawFileSink(const std::string& out_path) : m_out_path(out_path) {}
 
-    void on_track_begin(uint32_t, TrackType, bool, uint32_t, uint32_t) override
+    void on_track_begin(uint32_t, TrackType, bool, uint32_t, uint32_t,
+                        uint32_t, uint32_t, uint32_t) override
     {
         m_file.open(m_out_path, std::ios::binary);
         if (!m_file)

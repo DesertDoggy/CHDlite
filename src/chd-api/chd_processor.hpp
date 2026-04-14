@@ -42,9 +42,15 @@ public:
     /// @param is_audio    True if audio track.
     /// @param data_size   Bytes per sector/chunk for this track.
     /// @param frames      TOC logical frame count for this track.
+    /// @param pregap      Number of pregap frames (0 if none).
+    /// @param pgdatasize  Pregap sector data size (0 = pregap not in file).
+    /// @param postgap     Number of postgap frames (0 if none).
     virtual void on_track_begin(uint32_t track_num, TrackType track_type,
                                 bool is_audio, uint32_t data_size,
-                                uint32_t frames = 0) {}
+                                uint32_t frames = 0,
+                                uint32_t pregap = 0,
+                                uint32_t pgdatasize = 0,
+                                uint32_t postgap = 0) {}
 
     /// Called for each data chunk. For CD: one sector at a time.
     /// For raw: large buffer chunks. Data is already byte-swapped if needed.

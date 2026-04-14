@@ -73,7 +73,8 @@ static ChdProcessor::Result process_cd(chd_file& chd,
         bool is_audio = (track.trktype == cdrom_file::CD_TRACK_AUDIO);
 
         for (auto* sink : sinks)
-            sink->on_track_begin(t + 1, ttype, is_audio, track.datasize, track.frames);
+            sink->on_track_begin(t + 1, ttype, is_audio, track.datasize, track.frames,
+                                 track.pregap, track.pgdatasize, track.postgap);
 
         // chdman's formula for actual output frames
         uint32_t actualframes = track.frames - track.padframes + track.splitframes;

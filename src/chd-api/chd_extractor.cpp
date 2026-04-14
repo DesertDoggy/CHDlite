@@ -236,17 +236,12 @@ ExtractionResult ChdExtractor::do_extract_cd(const std::string& chd_path,
         return result;
     }
 
-    // Parse CD TOC from metadata
-    cdrom_file::toc toc = {};
-    err = cdrom_file::parse_metadata(&input_chd, toc);
-    if (err)
-    {
-        result.error_message = "Failed to parse CD metadata: " + err.message();
-        return result;
-    }
-
     // Open the cdrom_file for reading sectors
+    // IMPORTANT: Use cd.get_toc() rather than parse_metadata() because the
+    // cdrom_file constructor computes physframeofs/logframeofs/chdframeofs
+    // which parse_metadata does NOT populate.
     cdrom_file cd(&input_chd);
+    const cdrom_file::toc& toc = cd.get_toc();
     bool is_gdrom = cd.is_gdrom();
 
     // Determine output format
@@ -285,24 +280,7 @@ ExtractionResult ChdExtractor::do_extract_cd(const std::string& chd_path,
     if (gdi_mode)
         meta_content << toc.numtrks << "\n";
 
-    uint32_t cue_bin_offset = 0; // running offset for single-bin CUE mode
-
-    // For CUE: single BIN file unless split
-    bool split_bins = gdi_mode; // GDI always splits; CUE uses single BIN
-    std::string single_bin_name = stem + ".bin";
-    std::string single_bin_path = path_join(out_dir, single_bin_name);
-    std::ofstream single_bin;
-
-    if (!split_bins)
-    {
-        single_bin.open(single_bin_path, std::ios::binary);
-        if (!single_bin)
-        {
-            result.error_message = "Cannot create BIN file: " + single_bin_path;
-            return result;
-        }
-        result.output_files.push_back(single_bin_path);
-    }
+    // Default: split bins (one file per track), matching chdman extractcd -sb behavior
 
     for (uint32_t t = 0; t < toc.numtrks; t++)
     {
@@ -310,19 +288,26 @@ ExtractionResult ChdExtractor::do_extract_cd(const std::string& chd_path,
         const uint32_t sector_size = track.datasize;
         const bool is_audio = (track.trktype == cdrom_file::CD_TRACK_AUDIO);
 
-        // Per-track BIN file for GDI
+        // Per-track BIN file (always split)
         std::string track_bin_name;
         std::string track_bin_path;
         std::ofstream track_bin;
 
-        if (split_bins)
         {
-            std::ostringstream fname;
-            if (is_audio)
-                fname << stem << " (Track " << (t + 1) << ").raw";
+            if (toc.numtrks == 1 && !gdi_mode)
+            {
+                // Single track: name bin same as cue (no track suffix)
+                track_bin_name = stem + ".bin";
+            }
             else
-                fname << stem << " (Track " << (t + 1) << ").bin";
-            track_bin_name = fname.str();
+            {
+                std::ostringstream fname;
+                if (gdi_mode && is_audio)
+                    fname << stem << " (Track " << (t + 1) << ").raw";
+                else
+                    fname << stem << " (Track " << (t + 1) << ").bin";
+                track_bin_name = fname.str();
+            }
             track_bin_path = path_join(out_dir, track_bin_name);
             track_bin.open(track_bin_path, std::ios::binary);
             if (!track_bin)
@@ -333,37 +318,53 @@ ExtractionResult ChdExtractor::do_extract_cd(const std::string& chd_path,
             result.output_files.push_back(track_bin_path);
         }
 
-        std::ofstream& bin_out = split_bins ? track_bin : single_bin;
+        std::ofstream& bin_out = track_bin;
 
         // Write pregap (zeros) if CUE mode
         uint32_t pregap_frames = track.pregap;
 
-        // For CUE mode: write INDEX 00 (pregap) before actual data
-        // Position tracking for CUE
-        uint32_t track_file_offset = split_bins ? 0 : cue_bin_offset;
-
-        // Extract track frames
-        uint32_t phys_offset = track.physframeofs;
+        // Extract track frames using chdman's formula
+        uint32_t actualframes = track.frames - track.padframes + track.splitframes;
         std::vector<uint8_t> sector_buf(cdrom_file::MAX_SECTOR_DATA);
 
-        for (uint32_t f = 0; f < track.frames; f++)
+        for (uint32_t f = 0; f < actualframes; f++)
         {
-            if (!cd.read_data(phys_offset + f, sector_buf.data(),
-                              track.trktype, true))
+            // Handle splitframes for GD-ROM: first splitframes of a track
+            // come from the end of the previous track
+            int trk;
+            int frameofs;
+            if (t > 0 && f < track.splitframes)
+            {
+                trk = t - 1;
+                frameofs = toc.tracks[trk].frames - track.splitframes + f;
+            }
+            else
+            {
+                trk = t;
+                frameofs = f - track.splitframes;
+            }
+
+            if (!cd.read_data(cd.get_track_start_phys(trk) + frameofs,
+                              sector_buf.data(),
+                              toc.tracks[trk].trktype, true))
             {
                 // Fill with zeros on read error
                 std::memset(sector_buf.data(), 0, sector_size);
             }
 
             // Byte-swap audio for CUE/GDI output (MAME stores in big-endian)
-            if (is_audio && !(toc.flags & cdrom_file::CD_FLAG_GDROMLE))
+            // For GDI mode with CHD version <= 4, audio is already little-endian
+            bool swap_audio = (toc.tracks[trk].trktype == cdrom_file::CD_TRACK_AUDIO) &&
+                              ((gdi_mode && input_chd.version() > 4) || !gdi_mode);
+            if (swap_audio)
             {
-                for (uint32_t i = 0; i < sector_size - 1; i += 2)
+                uint32_t dsz = toc.tracks[trk].datasize;
+                for (uint32_t i = 0; i < dsz - 1; i += 2)
                     std::swap(sector_buf[i], sector_buf[i + 1]);
             }
 
-            bin_out.write(reinterpret_cast<const char*>(sector_buf.data()), sector_size);
-            total_bytes_written += sector_size;
+            bin_out.write(reinterpret_cast<const char*>(sector_buf.data()), toc.tracks[trk].datasize);
+            total_bytes_written += toc.tracks[trk].datasize;
             frames_done++;
 
             if (options.progress_callback && (frames_done % 1000 == 0))
@@ -375,8 +376,6 @@ ExtractionResult ChdExtractor::do_extract_cd(const std::string& chd_path,
                 }
             }
         }
-
-        cue_bin_offset += track.frames * sector_size;
 
         // Write metadata entry
         if (gdi_mode)
@@ -392,12 +391,8 @@ ExtractionResult ChdExtractor::do_extract_cd(const std::string& chd_path,
         }
         else
         {
-            // CUE format
-            if (split_bins || t == 0)
-            {
-                meta_content << "FILE \"" << (split_bins ? track_bin_name : single_bin_name)
-                             << "\" BINARY\n";
-            }
+            // CUE format — one FILE per track (split bins)
+            meta_content << "FILE \"" << track_bin_name << "\" BINARY\n";
 
             char track_num[8];
             std::snprintf(track_num, sizeof(track_num), "%02u", t + 1);
@@ -414,14 +409,8 @@ ExtractionResult ChdExtractor::do_extract_cd(const std::string& chd_path,
                 meta_content << "    PREGAP " << msf << "\n";
             }
 
-            // INDEX 01 position (in the output file)
-            uint32_t idx_frame = split_bins ? 0 : (track_file_offset / sector_size);
-            uint32_t m = idx_frame / (75 * 60);
-            uint32_t s = (idx_frame / 75) % 60;
-            uint32_t f_idx = idx_frame % 75;
-            char msf[16];
-            std::snprintf(msf, sizeof(msf), "%02u:%02u:%02u", m, s, f_idx);
-            meta_content << "    INDEX 01 " << msf << "\n";
+            // INDEX 01 — always 00:00:00 for split bins
+            meta_content << "    INDEX 01 00:00:00\n";
         }
     }
 

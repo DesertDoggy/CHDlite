@@ -28,6 +28,7 @@ add_library(lzma_sdk STATIC
     src/3rdparty/lzma/C/LzmaDec.c
     src/3rdparty/lzma/C/LzmaEnc.c
     src/3rdparty/lzma/C/LzFind.c
+    src/3rdparty/lzma/C/CpuArch.c
 )
 target_include_directories(lzma_sdk PUBLIC src/3rdparty/lzma/C)
 target_compile_definitions(lzma_sdk PRIVATE _7ZIP_ST Z7_ST)   # single-threaded LZMA
@@ -106,3 +107,28 @@ else()
 endif()
 
 set_target_properties(mame_chd_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# =====================================================================
+# CHDlite public API library
+# =====================================================================
+add_library(chdlite STATIC
+    src/chd-api/chd_reader.cpp
+    src/chd-api/chd_extractor.cpp
+    src/chd-api/chd_archiver.cpp
+)
+
+target_include_directories(chdlite
+    PUBLIC
+        src/chd-api
+    PRIVATE
+        src/mame/util
+        src/mame/osd
+)
+
+target_link_libraries(chdlite PUBLIC mame_chd_core)
+
+# =====================================================================
+# Smoke test executable
+# =====================================================================
+add_executable(smoke_test tests/smoke_test.cpp)
+target_link_libraries(smoke_test PRIVATE chdlite)

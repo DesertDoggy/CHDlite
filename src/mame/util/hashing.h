@@ -291,6 +291,44 @@ protected:
 	sum16_t             m_accum;        // internal accumulator
 };
 
+
+
+// ======================> SHA-256
+
+// final digest
+struct sha256_t
+{
+	bool operator==(const sha256_t &rhs) const noexcept { return memcmp(m_raw, rhs.m_raw, sizeof(m_raw)) == 0; }
+	bool operator!=(const sha256_t &rhs) const noexcept { return memcmp(m_raw, rhs.m_raw, sizeof(m_raw)) != 0; }
+	operator uint8_t *() noexcept { return m_raw; }
+	bool from_string(std::string_view string) noexcept;
+	std::string as_string() const;
+	uint8_t m_raw[32];
+	static const sha256_t null;
+};
+
+// creation helper
+class sha256_creator
+{
+public:
+	sha256_creator() noexcept { reset(); }
+	void reset() noexcept;
+	void append(const void *data, uint32_t length) noexcept;
+	sha256_t finish() noexcept;
+
+	static sha256_t simple(const void *data, uint32_t length) noexcept
+	{
+		sha256_creator creator;
+		creator.append(data, length);
+		return creator.finish();
+	}
+
+protected:
+	uint64_t m_cnt;
+	uint32_t m_state[8];
+	uint8_t  m_buf[64];
+};
+
 } // namespace util
 
 namespace std {

@@ -3,16 +3,30 @@
 // chd_reader.cpp - ChdReader implementation
 
 #include "chd_reader.hpp"
+#include "chd_processor.hpp"
 
 #include "chd.h"
 #include "cdrom.h"
 #include "chdcodec.h"
 #include "hashing.h"
 
+#include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <sstream>
 
 namespace chdlite {
+
+// ======================> Path helpers
+
+static std::string path_stem(const std::string& path)
+{
+    auto sep = path.find_last_of("/\\");
+    auto name = (sep == std::string::npos) ? path : path.substr(sep + 1);
+    auto dot = name.find_last_of('.');
+    return (dot == std::string::npos) ? name : name.substr(0, dot);
+}
 
 // ======================> Codec mapping helpers
 
@@ -242,93 +256,263 @@ bool ChdReader::read_sector(uint32_t lba, void* buffer, TrackType type) const
     return cd.read_data(lba, buffer, static_cast<uint32_t>(type));
 }
 
-HashResult ChdReader::hash_content(HashAlgorithm algorithm) const
+// ======================> Hash sink for ChdProcessor
+
+class HashSink : public ProcessorSink
 {
+public:
+    void on_track_begin(uint32_t track_num, TrackType track_type,
+                        bool is_audio, uint32_t, uint32_t) override
+    {
+        m_sha1.reset(); m_md5.reset(); m_crc.reset(); m_sha256.reset();
+        m_bytes = 0;
+        m_tracks.push_back({});
+        auto& t = m_tracks.back();
+        t.track_number = track_num;
+        t.type = track_type;
+        t.is_audio = is_audio;
+    }
+
+    void on_data(const void* data, uint32_t len) override
+    {
+        m_sha1.append(data, len);
+        m_md5.append(data, len);
+        m_crc.append(data, len);
+        m_sha256.append(data, len);
+        m_bytes += len;
+    }
+
+    void on_track_end() override
+    {
+        auto& t = m_tracks.back();
+        t.data_bytes = m_bytes;
+
+        auto s = m_sha1.finish();
+        t.sha1 = { HashAlgorithm::SHA1, s.as_string(), {s.m_raw, s.m_raw + 20} };
+
+        auto m = m_md5.finish();
+        t.md5 = { HashAlgorithm::MD5, m.as_string(), {m.m_raw, m.m_raw + 16} };
+
+        auto c = m_crc.finish();
+        uint32_t val = c.m_raw;
+        char buf[9];
+        std::snprintf(buf, sizeof(buf), "%08x", val);
+        t.crc32 = { HashAlgorithm::CRC32, buf,
+                     { uint8_t(val >> 24), uint8_t(val >> 16), uint8_t(val >> 8), uint8_t(val) } };
+
+        auto h = m_sha256.finish();
+        t.sha256 = { HashAlgorithm::SHA256, h.as_string(), {h.m_raw, h.m_raw + 32} };
+    }
+
+    std::vector<TrackHashResult>& tracks() { return m_tracks; }
+
+private:
+    util::sha1_creator   m_sha1;
+    util::md5_creator    m_md5;
+    util::crc32_creator  m_crc;
+    util::sha256_creator m_sha256;
+    uint64_t             m_bytes = 0;
+    std::vector<TrackHashResult> m_tracks;
+};
+
+// ======================> Sheet sink for CUE/GDI hash
+
+static const char* cue_track_type_string(TrackType trktype, uint32_t datasize)
+{
+    switch (trktype)
+    {
+    case TrackType::Mode1:
+        return (datasize == 2048) ? "MODE1/2048" : "MODE1/2352";
+    case TrackType::Mode1Raw:
+        return "MODE1/2352";
+    case TrackType::Mode2:
+    case TrackType::Mode2Form1:
+    case TrackType::Mode2Form2:
+    case TrackType::Mode2FormMix:
+        return (datasize == 2048) ? "MODE2/2048" : "MODE2/2352";
+    case TrackType::Mode2Raw:
+        return "MODE2/2352";
+    case TrackType::Audio:
+        return "AUDIO";
+    default:
+        return "MODE1/2352";
+    }
+}
+
+/// Builds CUE or GDI sheet text in memory (no file I/O) and hashes it.
+class SheetSink : public ProcessorSink
+{
+public:
+    SheetSink(const std::string& stem) : m_stem(stem) {}
+
+    void on_begin(ContentType type, uint32_t num_tracks) override
+    {
+        m_gdi = (type == ContentType::GDROM);
+        m_num_tracks = num_tracks;
+        if (m_gdi)
+            m_sheet << num_tracks << "\n";
+    }
+
+    void on_track_begin(uint32_t track_num, TrackType track_type,
+                        bool is_audio, uint32_t data_size,
+                        uint32_t frames) override
+    {
+        m_cur_track = track_num;
+        m_cur_type = track_type;
+        m_cur_audio = is_audio;
+        m_cur_datasize = data_size;
+        m_cur_toc_frames = frames;
+
+        // Build bin filename using same convention as extractor
+        if (m_num_tracks == 1 && !m_gdi)
+            m_cur_bin_name = m_stem + ".bin";
+        else if (m_gdi)
+        {
+            char buf[8];
+            std::snprintf(buf, sizeof(buf), "%02u", track_num);
+            m_cur_bin_name = m_stem + buf + (is_audio ? ".raw" : ".bin");
+        }
+        else
+        {
+            char buf[8];
+            if (m_num_tracks >= 10)
+                std::snprintf(buf, sizeof(buf), "%02u", track_num);
+            else
+                std::snprintf(buf, sizeof(buf), "%u", track_num);
+            m_cur_bin_name = m_stem + " (Track " + buf + ").bin";
+        }
+    }
+
+    void on_data(const void*, uint32_t) override
+    {
+    }
+
+    void on_track_end() override
+    {
+        if (m_gdi)
+        {
+            int gdi_type = m_cur_audio ? 0 : 4;
+            m_sheet << m_cur_track << " "
+                    << m_logframeofs << " "
+                    << gdi_type << " "
+                    << m_cur_datasize << " "
+                    << "\"" << m_cur_bin_name << "\" "
+                    << 0 << "\n";
+            m_logframeofs += m_cur_toc_frames;
+        }
+        else
+        {
+            m_sheet << "FILE \"" << m_cur_bin_name << "\" BINARY\n";
+            char tnum[8];
+            std::snprintf(tnum, sizeof(tnum), "%02u", m_cur_track);
+            m_sheet << "  TRACK " << tnum << " "
+                    << cue_track_type_string(m_cur_type, m_cur_datasize) << "\n";
+            m_sheet << "    INDEX 01 00:00:00\n";
+        }
+    }
+
+    void on_complete() override
+    {
+        m_content = m_sheet.str();
+
+        // Hash the sheet content
+        const void* data = m_content.data();
+        uint32_t len = static_cast<uint32_t>(m_content.size());
+
+        util::sha1_creator   sha1;   sha1.append(data, len);
+        util::md5_creator    md5;    md5.append(data, len);
+        util::crc32_creator  crc;    crc.append(data, len);
+        util::sha256_creator sha256; sha256.append(data, len);
+
+        auto s = sha1.finish();
+        m_hash.sha1 = { HashAlgorithm::SHA1, s.as_string(), {s.m_raw, s.m_raw + 20} };
+
+        auto m = md5.finish();
+        m_hash.md5 = { HashAlgorithm::MD5, m.as_string(), {m.m_raw, m.m_raw + 16} };
+
+        auto c = crc.finish();
+        uint32_t val = c.m_raw;
+        char buf[9];
+        std::snprintf(buf, sizeof(buf), "%08x", val);
+        m_hash.crc32 = { HashAlgorithm::CRC32, buf,
+                         { uint8_t(val >> 24), uint8_t(val >> 16), uint8_t(val >> 8), uint8_t(val) } };
+
+        auto h = sha256.finish();
+        m_hash.sha256 = { HashAlgorithm::SHA256, h.as_string(), {h.m_raw, h.m_raw + 32} };
+
+        m_hash.track_number = 0;
+        m_hash.type = TrackType::Mode1;
+        m_hash.is_audio = false;
+        m_hash.data_bytes = len;
+    }
+
+    bool is_cd() const { return m_num_tracks > 0; }
+    const std::string& content() const { return m_content; }
+    const TrackHashResult& hash() const { return m_hash; }
+
+private:
+    std::string m_stem;
+    bool m_gdi = false;
+    uint32_t m_num_tracks = 0;
+
+    uint32_t m_cur_track = 0;
+    TrackType m_cur_type = TrackType::Mode1;
+    bool m_cur_audio = false;
+    uint32_t m_cur_datasize = 0;
+    uint32_t m_cur_toc_frames = 0;
+    uint32_t m_logframeofs = 0;
+    std::string m_cur_bin_name;
+
+    std::ostringstream m_sheet;
+    std::string m_content;
+    TrackHashResult m_hash;
+};
+
+ContentHashResult ChdReader::hash_content() const
+{
+    ContentHashResult result = {};
+    result.success = false;
+
     if (!m_impl->chd.opened())
-        throw ChdException("CHD file not open");
+    {
+        result.error_message = "CHD file not open";
+        return result;
+    }
 
     auto& chd = m_impl->chd;
-    const uint32_t hunk_bytes = chd.hunk_bytes();
-    const uint32_t hunk_count = chd.hunk_count();
-    std::vector<uint8_t> buffer(hunk_bytes);
-    HashResult result;
-    result.algorithm = algorithm;
+    result.content_type = m_impl->detect_type();
 
-    switch (algorithm)
-    {
-    case HashAlgorithm::SHA1:
-    {
-        util::sha1_creator hasher;
-        for (uint32_t h = 0; h < hunk_count; h++)
-        {
-            auto err = chd.read_hunk(h, buffer.data());
-            if (err)
-                throw ChdException("Read error at hunk " + std::to_string(h));
+    // Embedded hashes
+    auto sha1 = chd.sha1();
+    if (sha1 != util::sha1_t::null)
+        result.chd_sha1 = sha1.as_string();
+    auto raw = chd.raw_sha1();
+    if (raw != util::sha1_t::null)
+        result.chd_raw_sha1 = raw.as_string();
 
-            // For the last hunk, only hash up to logical_bytes
-            uint32_t bytes = hunk_bytes;
-            if (h == hunk_count - 1)
-            {
-                uint64_t remaining = chd.logical_bytes() - (uint64_t(h) * hunk_bytes);
-                if (remaining < hunk_bytes)
-                    bytes = static_cast<uint32_t>(remaining);
-            }
-            hasher.append(buffer.data(), bytes);
-        }
-        auto digest = hasher.finish();
-        result.hex_string = digest.as_string();
-        result.raw.assign(digest.m_raw, digest.m_raw + 20);
-        break;
-    }
-    case HashAlgorithm::MD5:
-    {
-        util::md5_creator hasher;
-        for (uint32_t h = 0; h < hunk_count; h++)
-        {
-            auto err = chd.read_hunk(h, buffer.data());
-            if (err)
-                throw ChdException("Read error at hunk " + std::to_string(h));
+    // Use the unified processor to iterate content
+    HashSink hash_sink;
+    std::string stem = path_stem(m_impl->filepath);
+    SheetSink sheet_sink(stem);
+    std::vector<ProcessorSink*> sinks = { &hash_sink, &sheet_sink };
+    auto proc = ChdProcessor::process(m_impl->filepath, sinks);
 
-            uint32_t bytes = hunk_bytes;
-            if (h == hunk_count - 1)
-            {
-                uint64_t remaining = chd.logical_bytes() - (uint64_t(h) * hunk_bytes);
-                if (remaining < hunk_bytes)
-                    bytes = static_cast<uint32_t>(remaining);
-            }
-            hasher.append(buffer.data(), bytes);
-        }
-        auto digest = hasher.finish();
-        result.hex_string = digest.as_string();
-        result.raw.assign(digest.m_raw, digest.m_raw + 16);
-        break;
-    }
-    case HashAlgorithm::CRC32:
+    if (!proc.success)
     {
-        util::crc32_creator hasher;
-        for (uint32_t h = 0; h < hunk_count; h++)
-        {
-            auto err = chd.read_hunk(h, buffer.data());
-            if (err)
-                throw ChdException("Read error at hunk " + std::to_string(h));
-
-            uint32_t bytes = hunk_bytes;
-            if (h == hunk_count - 1)
-            {
-                uint64_t remaining = chd.logical_bytes() - (uint64_t(h) * hunk_bytes);
-                if (remaining < hunk_bytes)
-                    bytes = static_cast<uint32_t>(remaining);
-            }
-            hasher.append(buffer.data(), bytes);
-        }
-        auto digest = hasher.finish();
-        result.hex_string = digest.as_string();
-        uint32_t val = digest.m_raw;
-        result.raw = { uint8_t(val >> 24), uint8_t(val >> 16), uint8_t(val >> 8), uint8_t(val) };
-        break;
-    }
+        result.error_message = proc.error_message;
+        return result;
     }
 
+    result.tracks = std::move(hash_sink.tracks());
+
+    // Populate sheet hash for CD/GD-ROM content
+    if (sheet_sink.is_cd())
+    {
+        result.sheet_content = sheet_sink.content();
+        result.sheet_hash = sheet_sink.hash();
+    }
+
+    result.success = true;
     return result;
 }
 

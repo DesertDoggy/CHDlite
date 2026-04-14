@@ -35,13 +35,6 @@ public:
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;
-
-    ExtractionResult do_extract_raw(const std::string& chd_path,
-                                    const std::string& parent_path,
-                                    const ExtractOptions& options);
-    ExtractionResult do_extract_cd(const std::string& chd_path,
-                                   const std::string& parent_path,
-                                   const ExtractOptions& options);
 };
 
 } // namespace chdlite

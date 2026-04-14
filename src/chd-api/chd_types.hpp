@@ -50,7 +50,8 @@ enum class HashAlgorithm
 {
     SHA1,
     MD5,
-    CRC32
+    CRC32,
+    SHA256
 };
 
 // ======================> CD system detection for smart codec defaults
@@ -99,6 +100,32 @@ struct HashResult
     HashAlgorithm algorithm;
     std::string   hex_string;    // hex-encoded digest
     std::vector<uint8_t> raw;    // raw digest bytes
+};
+
+struct TrackHashResult
+{
+    uint32_t    track_number;    // 1-based (0 = whole-file for DVD/raw)
+    TrackType   type;
+    bool        is_audio;
+    uint64_t    data_bytes;      // total bytes hashed for this track
+    HashResult  sha1;
+    HashResult  md5;
+    HashResult  crc32;
+    HashResult  sha256;
+};
+
+struct ContentHashResult
+{
+    bool        success;
+    std::string error_message;
+    ContentType content_type;
+    std::string chd_sha1;        // embedded CHD SHA-1 (overall)
+    std::string chd_raw_sha1;    // embedded raw SHA-1
+    std::vector<TrackHashResult> tracks;  // per-track (or single entry for DVD/raw)
+
+    // Generated CUE/GDI sheet (CD/GD-ROM only, constructed — not stored in CHD)
+    std::string     sheet_content;   // CUE or GDI text (empty for non-CD)
+    TrackHashResult sheet_hash;      // hashes of the sheet content
 };
 
 struct TrackInfo

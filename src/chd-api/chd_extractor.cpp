@@ -1,14 +1,12 @@
-// license:GPLv3
+// license:BSD-3-Clause
 // CHDlite - Cross-platform CHD library
-// chd_extractor.cpp - Extraction implementation
+// chd_extractor.cpp - Extraction implementation using ChdProcessor
 
 #include "chd_extractor.hpp"
-#include "chd_reader.hpp"
+#include "chd_processor.hpp"
 
 #include "chd.h"
 #include "cdrom.h"
-#include "chdcodec.h"
-#include "corefile.h"
 
 #include <algorithm>
 #include <cstring>
@@ -17,7 +15,7 @@
 
 namespace chdlite {
 
-// ======================> Helpers
+// ======================> Path helpers
 
 static std::string path_stem(const std::string& path)
 {
@@ -50,34 +48,191 @@ static std::string path_join(const std::string& dir, const std::string& file)
     return dir + "/" + file;
 }
 
-static const char* cue_track_type_string(uint32_t trktype, uint32_t datasize)
+static const char* cue_track_type_string(TrackType trktype, uint32_t datasize)
 {
     switch (trktype)
     {
-    case cdrom_file::CD_TRACK_MODE1:
+    case TrackType::Mode1:
         return (datasize == 2048) ? "MODE1/2048" : "MODE1/2352";
-    case cdrom_file::CD_TRACK_MODE1_RAW:
+    case TrackType::Mode1Raw:
         return "MODE1/2352";
-    case cdrom_file::CD_TRACK_MODE2:
-    case cdrom_file::CD_TRACK_MODE2_FORM1:
-    case cdrom_file::CD_TRACK_MODE2_FORM2:
-    case cdrom_file::CD_TRACK_MODE2_FORM_MIX:
+    case TrackType::Mode2:
+    case TrackType::Mode2Form1:
+    case TrackType::Mode2Form2:
+    case TrackType::Mode2FormMix:
         return (datasize == 2048) ? "MODE2/2048" : "MODE2/2352";
-    case cdrom_file::CD_TRACK_MODE2_RAW:
+    case TrackType::Mode2Raw:
         return "MODE2/2352";
-    case cdrom_file::CD_TRACK_AUDIO:
+    case TrackType::Audio:
         return "AUDIO";
     default:
         return "MODE1/2352";
     }
 }
 
-// ======================> Impl
+// ======================> File-writing sink for CD/GD-ROM
 
-struct ChdExtractor::Impl
+class CdFileSink : public ProcessorSink
 {
-    // Nothing stored persistently: each extract call is self-contained
+public:
+    CdFileSink(const std::string& out_dir, const std::string& stem,
+               bool gdi_mode)
+        : m_out_dir(out_dir), m_stem(stem)
+        , m_gdi_mode(gdi_mode) {}
+
+    void on_begin(ContentType type, uint32_t num_tracks) override
+    {
+        m_num_tracks = num_tracks;
+        if (m_gdi_mode)
+            m_meta << num_tracks << "\n";
+    }
+
+    void on_track_begin(uint32_t track_num, TrackType track_type,
+                        bool is_audio, uint32_t data_size,
+                        uint32_t frames) override
+    {
+        m_cur_track = track_num;
+        m_cur_type = track_type;
+        m_cur_audio = is_audio;
+        m_cur_datasize = data_size;
+        m_cur_toc_frames = frames;
+        m_track_frames = 0;
+
+        // Determine bin filename
+        if (m_num_tracks == 1 && !m_gdi_mode)
+        {
+            m_cur_bin_name = m_stem + ".bin";
+        }
+        else if (m_gdi_mode)
+        {
+            // GDI: stemNN.bin / stemNN.raw (chdman convention)
+            char buf[8];
+            std::snprintf(buf, sizeof(buf), "%02u", track_num);
+            m_cur_bin_name = m_stem + buf + (is_audio ? ".raw" : ".bin");
+        }
+        else
+        {
+            // CUE: stem (Track N).bin if <10 tracks, stem (Track NN).bin if >=10
+            char buf[8];
+            if (m_num_tracks >= 10)
+                std::snprintf(buf, sizeof(buf), "%02u", track_num);
+            else
+                std::snprintf(buf, sizeof(buf), "%u", track_num);
+            m_cur_bin_name = m_stem + " (Track " + buf + ").bin";
+        }
+
+        std::string bin_path = path_join(m_out_dir, m_cur_bin_name);
+        m_cur_file.open(bin_path, std::ios::binary);
+        if (!m_cur_file)
+            m_error = "Cannot create track file: " + bin_path;
+        m_output_files.push_back(bin_path);
+    }
+
+    void on_data(const void* data, uint32_t len) override
+    {
+        if (m_cur_file)
+        {
+            m_cur_file.write(reinterpret_cast<const char*>(data), len);
+            m_bytes_written += len;
+        }
+        m_track_frames++;
+    }
+
+    void on_track_end() override
+    {
+        m_cur_file.close();
+
+        // Write metadata entry
+        if (m_gdi_mode)
+        {
+            int gdi_type = m_cur_audio ? 0 : 4;
+            m_meta << m_cur_track << " "
+                   << m_cur_logframeofs << " "
+                   << gdi_type << " "
+                   << m_cur_datasize << " "
+                   << "\"" << m_cur_bin_name << "\" "
+                   << 0 << "\n";
+            m_cur_logframeofs += m_cur_toc_frames;
+        }
+        else
+        {
+            m_meta << "FILE \"" << m_cur_bin_name << "\" BINARY\n";
+            char tnum[8];
+            std::snprintf(tnum, sizeof(tnum), "%02u", m_cur_track);
+            m_meta << "  TRACK " << tnum << " "
+                   << cue_track_type_string(m_cur_type, m_cur_datasize) << "\n";
+            m_meta << "    INDEX 01 00:00:00\n";
+        }
+    }
+
+    void on_complete() override {}
+
+    const std::string& error() const { return m_error; }
+    const std::string& metadata() const { m_meta_str = m_meta.str(); return m_meta_str; }
+    const std::vector<std::string>& output_files() const { return m_output_files; }
+    uint64_t bytes_written() const { return m_bytes_written; }
+
+private:
+    std::string m_out_dir;
+    std::string m_stem;
+    bool m_gdi_mode;
+    uint32_t m_num_tracks = 0;
+
+    uint32_t m_cur_track = 0;
+    TrackType m_cur_type = TrackType::Mode1;
+    bool m_cur_audio = false;
+    uint32_t m_cur_datasize = 0;
+    uint32_t m_cur_toc_frames = 0;
+    uint32_t m_track_frames = 0;
+    uint32_t m_cur_logframeofs = 0;
+    std::string m_cur_bin_name;
+    std::ofstream m_cur_file;
+    std::string m_error;
+
+    std::ostringstream m_meta;
+    mutable std::string m_meta_str;
+    std::vector<std::string> m_output_files;
+    uint64_t m_bytes_written = 0;
 };
+
+// ======================> File-writing sink for raw/DVD/HD
+
+class RawFileSink : public ProcessorSink
+{
+public:
+    RawFileSink(const std::string& out_path) : m_out_path(out_path) {}
+
+    void on_track_begin(uint32_t, TrackType, bool, uint32_t, uint32_t) override
+    {
+        m_file.open(m_out_path, std::ios::binary);
+        if (!m_file)
+            m_error = "Cannot create output file: " + m_out_path;
+    }
+
+    void on_data(const void* data, uint32_t len) override
+    {
+        if (m_file)
+        {
+            m_file.write(reinterpret_cast<const char*>(data), len);
+            m_bytes_written += len;
+        }
+    }
+
+    void on_track_end() override { m_file.close(); }
+
+    const std::string& error() const { return m_error; }
+    uint64_t bytes_written() const { return m_bytes_written; }
+
+private:
+    std::string m_out_path;
+    std::ofstream m_file;
+    std::string m_error;
+    uint64_t m_bytes_written = 0;
+};
+
+// ======================> ChdExtractor
+
+struct ChdExtractor::Impl {};
 
 ChdExtractor::ChdExtractor() : m_impl(std::make_unique<Impl>()) {}
 ChdExtractor::~ChdExtractor() = default;
@@ -97,339 +252,114 @@ ExtractionResult ChdExtractor::extract(const std::string& chd_path,
     ExtractionResult result = {};
     result.success = false;
 
-    try
+    std::string out_dir = options.output_dir.empty() ? path_dir(chd_path) : options.output_dir;
+    std::string stem = path_stem(chd_path);
+
+    // Quick open/detect/close to determine content type for sink selection.
+    ContentType type;
+    bool is_gdrom = false;
     {
-        // Open CHD to detect content type
-        chd_file input_chd;
-        auto err = input_chd.open(chd_path, false);
+        chd_file chd;
+        auto err = chd.open(chd_path, false);
         if (err)
         {
             result.error_message = "Failed to open CHD: " + err.message();
             return result;
         }
+        if (!chd.check_is_gd())        { type = ContentType::GDROM; is_gdrom = true; }
+        else if (!chd.check_is_cd())    type = ContentType::CDROM;
+        else if (!chd.check_is_dvd())   type = ContentType::DVD;
+        else if (!chd.check_is_av())    type = ContentType::LaserDisc;
+        else if (!chd.check_is_hd())    type = ContentType::HardDisk;
+        else                            type = ContentType::Raw;
+    }
+    result.detected_type = type;
 
-        // Detect content type
-        ContentType type = ContentType::Raw;
-        if (!input_chd.check_is_gd())        type = ContentType::GDROM;
-        else if (!input_chd.check_is_cd())    type = ContentType::CDROM;
-        else if (!input_chd.check_is_dvd())   type = ContentType::DVD;
-        else if (!input_chd.check_is_av())    type = ContentType::LaserDisc;
-        else if (!input_chd.check_is_hd())    type = ContentType::HardDisk;
+    bool use_cd = (type == ContentType::CDROM || type == ContentType::GDROM) && !options.force_raw;
 
-        result.detected_type = type;
-        input_chd.close();
-
-        // Route to appropriate extractor
-        if (type == ContentType::CDROM || type == ContentType::GDROM)
+    if (use_cd)
+    {
+        bool gdi_mode;
+        std::string meta_ext;
+        if (!options.output_filename.empty())
         {
-            if (!options.force_raw)
-                return do_extract_cd(chd_path, parent_chd_path, options);
-        }
-
-        // Raw/HD/DVD/LD: extract as raw binary
-        return do_extract_raw(chd_path, parent_chd_path, options);
-    }
-    catch (const std::exception& e)
-    {
-        result.error_message = e.what();
-        return result;
-    }
-}
-
-// ======================> Raw extraction (HD, DVD, raw, or forced-raw CD)
-
-ExtractionResult ChdExtractor::do_extract_raw(const std::string& chd_path,
-                                              const std::string& parent_path,
-                                              const ExtractOptions& options)
-{
-    ExtractionResult result = {};
-    result.success = false;
-
-    chd_file input_chd;
-    auto err = input_chd.open(chd_path, false);
-    if (err)
-    {
-        result.error_message = "Failed to open CHD: " + err.message();
-        return result;
-    }
-
-    // Determine output path
-    std::string out_dir = options.output_dir.empty() ? path_dir(chd_path) : options.output_dir;
-    std::string out_name = options.output_filename.empty()
-        ? (path_stem(chd_path) + ".bin")
-        : options.output_filename;
-    std::string out_path = path_join(out_dir, out_name);
-
-    std::ofstream outfile(out_path, std::ios::binary);
-    if (!outfile)
-    {
-        result.error_message = "Cannot create output file: " + out_path;
-        return result;
-    }
-
-    const uint64_t total_bytes = input_chd.logical_bytes();
-    const uint32_t hunk_bytes = input_chd.hunk_bytes();
-    constexpr uint32_t BUFFER_SIZE = 32 * 1024 * 1024; // 32 MB
-    const uint32_t hunks_per_read = std::max(1u, BUFFER_SIZE / hunk_bytes);
-    std::vector<uint8_t> buffer(hunks_per_read * hunk_bytes);
-
-    uint64_t bytes_written = 0;
-    uint32_t hunk_num = 0;
-    const uint32_t total_hunks = input_chd.hunk_count();
-
-    while (hunk_num < total_hunks)
-    {
-        uint32_t hunks_this_read = std::min(hunks_per_read, total_hunks - hunk_num);
-        uint64_t bytes_to_read = std::min(
-            uint64_t(hunks_this_read) * hunk_bytes,
-            total_bytes - bytes_written);
-
-        err = input_chd.read_bytes(bytes_written, buffer.data(), static_cast<uint32_t>(bytes_to_read));
-        if (err)
-        {
-            result.error_message = "Read error at offset " + std::to_string(bytes_written);
-            return result;
-        }
-
-        outfile.write(reinterpret_cast<const char*>(buffer.data()), bytes_to_read);
-        if (!outfile)
-        {
-            result.error_message = "Write error at offset " + std::to_string(bytes_written);
-            return result;
-        }
-
-        bytes_written += bytes_to_read;
-        hunk_num += hunks_this_read;
-
-        if (options.progress_callback)
-        {
-            if (!options.progress_callback(bytes_written, total_bytes))
-            {
-                result.error_message = "Extraction cancelled";
-                return result;
-            }
-        }
-    }
-
-    outfile.close();
-    result.success = true;
-    result.output_path = out_path;
-    result.output_files.push_back(out_path);
-    result.bytes_written = bytes_written;
-    return result;
-}
-
-// ======================> CD extraction (CUE/BIN or GDI)
-
-ExtractionResult ChdExtractor::do_extract_cd(const std::string& chd_path,
-                                             const std::string& parent_path,
-                                             const ExtractOptions& options)
-{
-    ExtractionResult result = {};
-    result.success = false;
-
-    chd_file input_chd;
-    auto err = input_chd.open(chd_path, false);
-    if (err)
-    {
-        result.error_message = "Failed to open CHD: " + err.message();
-        return result;
-    }
-
-    // Open the cdrom_file for reading sectors
-    // IMPORTANT: Use cd.get_toc() rather than parse_metadata() because the
-    // cdrom_file constructor computes physframeofs/logframeofs/chdframeofs
-    // which parse_metadata does NOT populate.
-    cdrom_file cd(&input_chd);
-    const cdrom_file::toc& toc = cd.get_toc();
-    bool is_gdrom = cd.is_gdrom();
-
-    // Determine output format
-    std::string out_dir = options.output_dir.empty() ? path_dir(chd_path) : options.output_dir;
-    std::string stem = path_stem(chd_path);
-
-    // Decide format: GDI for GD-ROM, CUE/BIN otherwise (unless forced)
-    std::string meta_ext;
-    bool gdi_mode;
-
-    if (!options.output_filename.empty())
-    {
-        meta_ext = path_ext(options.output_filename);
-        gdi_mode = (meta_ext == ".gdi");
-    }
-    else
-    {
-        gdi_mode = is_gdrom && !options.force_bin_cue;
-        meta_ext = gdi_mode ? ".gdi" : ".cue";
-    }
-
-    std::string meta_filename = options.output_filename.empty()
-        ? (stem + meta_ext)
-        : options.output_filename;
-    std::string meta_path = path_join(out_dir, meta_filename);
-
-    // Track extraction
-    uint64_t total_frames = 0;
-    for (uint32_t t = 0; t < toc.numtrks; t++)
-        total_frames += toc.tracks[t].frames + toc.tracks[t].extraframes;
-
-    uint64_t frames_done = 0;
-    uint64_t total_bytes_written = 0;
-    std::ostringstream meta_content;
-
-    if (gdi_mode)
-        meta_content << toc.numtrks << "\n";
-
-    // Default: split bins (one file per track), matching chdman extractcd -sb behavior
-
-    for (uint32_t t = 0; t < toc.numtrks; t++)
-    {
-        auto& track = toc.tracks[t];
-        const uint32_t sector_size = track.datasize;
-        const bool is_audio = (track.trktype == cdrom_file::CD_TRACK_AUDIO);
-
-        // Per-track BIN file (always split)
-        std::string track_bin_name;
-        std::string track_bin_path;
-        std::ofstream track_bin;
-
-        {
-            if (toc.numtrks == 1 && !gdi_mode)
-            {
-                // Single track: name bin same as cue (no track suffix)
-                track_bin_name = stem + ".bin";
-            }
-            else
-            {
-                std::ostringstream fname;
-                if (gdi_mode && is_audio)
-                    fname << stem << " (Track " << (t + 1) << ").raw";
-                else
-                    fname << stem << " (Track " << (t + 1) << ").bin";
-                track_bin_name = fname.str();
-            }
-            track_bin_path = path_join(out_dir, track_bin_name);
-            track_bin.open(track_bin_path, std::ios::binary);
-            if (!track_bin)
-            {
-                result.error_message = "Cannot create track file: " + track_bin_path;
-                return result;
-            }
-            result.output_files.push_back(track_bin_path);
-        }
-
-        std::ofstream& bin_out = track_bin;
-
-        // Write pregap (zeros) if CUE mode
-        uint32_t pregap_frames = track.pregap;
-
-        // Extract track frames using chdman's formula
-        uint32_t actualframes = track.frames - track.padframes + track.splitframes;
-        std::vector<uint8_t> sector_buf(cdrom_file::MAX_SECTOR_DATA);
-
-        for (uint32_t f = 0; f < actualframes; f++)
-        {
-            // Handle splitframes for GD-ROM: first splitframes of a track
-            // come from the end of the previous track
-            int trk;
-            int frameofs;
-            if (t > 0 && f < track.splitframes)
-            {
-                trk = t - 1;
-                frameofs = toc.tracks[trk].frames - track.splitframes + f;
-            }
-            else
-            {
-                trk = t;
-                frameofs = f - track.splitframes;
-            }
-
-            if (!cd.read_data(cd.get_track_start_phys(trk) + frameofs,
-                              sector_buf.data(),
-                              toc.tracks[trk].trktype, true))
-            {
-                // Fill with zeros on read error
-                std::memset(sector_buf.data(), 0, sector_size);
-            }
-
-            // Byte-swap audio for CUE/GDI output (MAME stores in big-endian)
-            // For GDI mode with CHD version <= 4, audio is already little-endian
-            bool swap_audio = (toc.tracks[trk].trktype == cdrom_file::CD_TRACK_AUDIO) &&
-                              ((gdi_mode && input_chd.version() > 4) || !gdi_mode);
-            if (swap_audio)
-            {
-                uint32_t dsz = toc.tracks[trk].datasize;
-                for (uint32_t i = 0; i < dsz - 1; i += 2)
-                    std::swap(sector_buf[i], sector_buf[i + 1]);
-            }
-
-            bin_out.write(reinterpret_cast<const char*>(sector_buf.data()), toc.tracks[trk].datasize);
-            total_bytes_written += toc.tracks[trk].datasize;
-            frames_done++;
-
-            if (options.progress_callback && (frames_done % 1000 == 0))
-            {
-                if (!options.progress_callback(frames_done, total_frames))
-                {
-                    result.error_message = "Extraction cancelled";
-                    return result;
-                }
-            }
-        }
-
-        // Write metadata entry
-        if (gdi_mode)
-        {
-            // GDI format: track# startlba type sectorsize filename offset
-            int gdi_type = is_audio ? 0 : 4;
-            meta_content << (t + 1) << " "
-                         << track.logframeofs << " "
-                         << gdi_type << " "
-                         << sector_size << " "
-                         << "\"" << track_bin_name << "\" "
-                         << 0 << "\n";
+            meta_ext = path_ext(options.output_filename);
+            gdi_mode = (meta_ext == ".gdi");
         }
         else
         {
-            // CUE format — one FILE per track (split bins)
-            meta_content << "FILE \"" << track_bin_name << "\" BINARY\n";
-
-            char track_num[8];
-            std::snprintf(track_num, sizeof(track_num), "%02u", t + 1);
-            meta_content << "  TRACK " << track_num << " "
-                         << cue_track_type_string(track.trktype, sector_size) << "\n";
-
-            if (pregap_frames > 0)
-            {
-                uint32_t m = pregap_frames / (75 * 60);
-                uint32_t s = (pregap_frames / 75) % 60;
-                uint32_t f = pregap_frames % 75;
-                char msf[16];
-                std::snprintf(msf, sizeof(msf), "%02u:%02u:%02u", m, s, f);
-                meta_content << "    PREGAP " << msf << "\n";
-            }
-
-            // INDEX 01 — always 00:00:00 for split bins
-            meta_content << "    INDEX 01 00:00:00\n";
+            gdi_mode = is_gdrom && !options.force_bin_cue;
+            meta_ext = gdi_mode ? ".gdi" : ".cue";
         }
-    }
 
-    // Write metadata file
-    {
-        std::ofstream meta_out(meta_path);
-        if (!meta_out)
+        std::string meta_filename = options.output_filename.empty()
+            ? (stem + meta_ext) : options.output_filename;
+        std::string meta_path = path_join(out_dir, meta_filename);
+
+        CdFileSink sink(out_dir, stem, gdi_mode);
+        std::vector<ProcessorSink*> sinks = { &sink };
+
+        auto proc_result = ChdProcessor::process(chd_path, sinks, options.progress_callback);
+
+        if (!proc_result.success)
         {
-            result.error_message = "Cannot create metadata file: " + meta_path;
+            result.error_message = proc_result.error_message;
             return result;
         }
-        meta_out << meta_content.str();
+        if (!sink.error().empty())
+        {
+            result.error_message = sink.error();
+            return result;
+        }
+
+        // Write metadata file
+        {
+            std::ofstream meta_out(meta_path);
+            if (!meta_out)
+            {
+                result.error_message = "Cannot create metadata file: " + meta_path;
+                return result;
+            }
+            meta_out << sink.metadata();
+        }
+
+        result.success = true;
+        result.output_path = meta_path;
+        result.output_files = sink.output_files();
         result.output_files.insert(result.output_files.begin(), meta_path);
+        result.bytes_written = sink.bytes_written();
+        result.detected_type = proc_result.content_type;
+    }
+    else
+    {
+        std::string ext = (type == ContentType::DVD) ? ".iso" : ".bin";
+        std::string out_name = options.output_filename.empty()
+            ? (stem + ext) : options.output_filename;
+        std::string out_path = path_join(out_dir, out_name);
+
+        RawFileSink sink(out_path);
+        std::vector<ProcessorSink*> sinks = { &sink };
+
+        auto proc_result = ChdProcessor::process(chd_path, sinks, options.progress_callback);
+
+        if (!proc_result.success)
+        {
+            result.error_message = proc_result.error_message;
+            return result;
+        }
+        if (!sink.error().empty())
+        {
+            result.error_message = sink.error();
+            return result;
+        }
+
+        result.success = true;
+        result.output_path = out_path;
+        result.output_files.push_back(out_path);
+        result.bytes_written = sink.bytes_written();
+        result.detected_type = proc_result.content_type;
     }
 
-    result.success = true;
-    result.output_path = meta_path;
-    result.bytes_written = total_bytes_written;
-    result.detected_type = is_gdrom ? ContentType::GDROM : ContentType::CDROM;
     return result;
 }
 

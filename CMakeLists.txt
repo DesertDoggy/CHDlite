@@ -113,6 +113,7 @@ set_target_properties(mame_chd_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # =====================================================================
 add_library(chdlite STATIC
     src/chd-api/chd_reader.cpp
+    src/chd-api/chd_processor.cpp
     src/chd-api/chd_extractor.cpp
     src/chd-api/chd_archiver.cpp
 )

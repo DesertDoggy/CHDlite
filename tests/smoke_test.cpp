@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -63,8 +64,71 @@ struct TestResult
     std::string chd_path;
     bool read_ok = false;
     bool extract_ok = false;
+    bool hash_ok = false;
+    int hash_tracks_matched = 0;
+    int hash_tracks_total = 0;
     std::string error;
 };
+
+// Reference hashes loaded from chd-content-hashes file
+// Map: filename -> { sha1, md5, crc32 }
+struct RefHash { std::string sha1; std::string md5; std::string crc32; };
+static std::map<std::string, RefHash> g_ref_hashes;
+
+static void load_reference_hashes(const std::string& path)
+{
+    std::ifstream f(path);
+    if (!f) return;
+    std::string line;
+    // skip header
+    if (!std::getline(f, line)) return;
+    while (std::getline(f, line)) {
+        // tab-separated: filename sha1 md5 crc32 ...
+        std::vector<std::string> cols;
+        size_t pos = 0;
+        while (pos < line.size()) {
+            auto tab = line.find('\t', pos);
+            if (tab == std::string::npos) {
+                cols.push_back(line.substr(pos));
+                break;
+            }
+            cols.push_back(line.substr(pos, tab - pos));
+            pos = tab + 1;
+        }
+        if (cols.size() >= 4 && !cols[0].empty() && cols[1].size() == 40) {
+            RefHash rh;
+            rh.sha1 = cols[1];
+            rh.md5 = cols[2];
+            rh.crc32 = cols[3];
+            g_ref_hashes[cols[0]] = rh;
+        }
+    }
+}
+
+// Lookup reference hash by filename, trying both "Track N" and "Track 0N" formats
+static const RefHash* find_ref_hash(const std::string& name)
+{
+    auto it = g_ref_hashes.find(name);
+    if (it != g_ref_hashes.end()) return &it->second;
+
+    // Try zero-padded track number: "Track 1" -> "Track 01"
+    std::string padded = name;
+    std::string pattern = "(Track ";
+    auto tpos = padded.find(pattern);
+    if (tpos != std::string::npos) {
+        auto numstart = tpos + pattern.size();
+        auto paren = padded.find(')', numstart);
+        if (paren != std::string::npos) {
+            std::string numstr = padded.substr(numstart, paren - numstart);
+            if (numstr.size() == 1) {
+                padded = padded.substr(0, numstart) + "0" + numstr + padded.substr(paren);
+                it = g_ref_hashes.find(padded);
+                if (it != g_ref_hashes.end()) return &it->second;
+            }
+        }
+    }
+    return nullptr;
+}
 
 static TestResult test_one_chd(const std::string& chd_path, const std::string& output_dir)
 {
@@ -124,6 +188,107 @@ static TestResult test_one_chd(const std::string& chd_path, const std::string& o
     }
 
     tr.read_ok = true;
+
+    // --- Content hashing ---
+    log_print("  Hashing content...\n");
+    {
+        auto t0h = std::chrono::steady_clock::now();
+        auto hash_result = reader.hash_content();
+        auto t1h = std::chrono::steady_clock::now();
+        double hash_sec = std::chrono::duration<double>(t1h - t0h).count();
+
+        if (hash_result.success) {
+            log_print("  Hash OK (%.1fs, %zu tracks)\n", hash_sec, hash_result.tracks.size());
+            tr.hash_tracks_total = (int)hash_result.tracks.size();
+
+            // Determine the filename pattern for looking up reference hashes
+            std::string stem = fs::path(chd_path).stem().string();
+            bool is_cd = (hash_result.content_type == chdlite::ContentType::CDROM ||
+                          hash_result.content_type == chdlite::ContentType::GDROM);
+
+            for (const auto& thr : hash_result.tracks) {
+                std::string ref_name;
+                if (!is_cd) {
+                    // DVD/raw: reference uses .iso extension
+                    ref_name = stem + ".iso";
+                    // Also try .bin if .iso not found
+                } else if (hash_result.tracks.size() == 1) {
+                    // Single-track CD: "Name (Track 1).bin" in reference
+                    ref_name = stem + " (Track 1).bin";
+                } else {
+                    // Multi-track: check GD-ROM audio = .raw
+                    bool gdi = (hash_result.content_type == chdlite::ContentType::GDROM);
+                    std::string ext = (gdi && thr.is_audio) ? ".raw" : ".bin";
+                    char buf[16];
+                    std::snprintf(buf, sizeof(buf), "%02u", thr.track_number);
+                    // Try "(Track NN)" format first, then "stemNN" format
+                    ref_name = stem + " (Track " + buf + ")" + ext;
+                }
+
+                const RefHash* rh = find_ref_hash(ref_name);
+                // Try alternate naming formats used by different tools
+                if (!rh && is_cd && hash_result.tracks.size() > 1) {
+                    bool gdi = (hash_result.content_type == chdlite::ContentType::GDROM);
+                    std::string ext = (gdi && thr.is_audio) ? ".raw" : ".bin";
+                    char buf_pad[16], buf_nopad[16];
+                    std::snprintf(buf_pad, sizeof(buf_pad), "%02u", thr.track_number);
+                    std::snprintf(buf_nopad, sizeof(buf_nopad), "%u", thr.track_number);
+                    // "stem (Track N).ext" unpadded
+                    if (!rh) rh = find_ref_hash(stem + " (Track " + buf_nopad + ")" + ext);
+                    // "stemNN.ext" direct append padded
+                    if (!rh) rh = find_ref_hash(stem + buf_pad + ext);
+                    // "stemN.ext" direct append unpadded
+                    if (!rh) rh = find_ref_hash(stem + buf_nopad + ext);
+                }
+                // Also try without zero-padded track for DVD
+                if (!rh && !is_cd) {
+                    ref_name = stem + ".bin";
+                    rh = find_ref_hash(ref_name);
+                }
+
+                if (rh) {
+                    bool sha_match = (thr.sha1.hex_string == rh->sha1);
+                    bool md5_match = (thr.md5.hex_string == rh->md5);
+                    bool crc_match = (thr.crc32.hex_string == rh->crc32);
+
+                    if (sha_match && md5_match && crc_match) {
+                        log_print("    Track %02u: SHA1=%s  ALL MATCH\n",
+                            thr.track_number, thr.sha1.hex_string.c_str());
+                        tr.hash_tracks_matched++;
+                    } else {
+                        log_print("    Track %02u: MISMATCH\n", thr.track_number);
+                        log_print("      SHA1: %s %s (ref: %s)\n",
+                            thr.sha1.hex_string.c_str(), sha_match ? "OK" : "FAIL", rh->sha1.c_str());
+                        log_print("      MD5:  %s %s (ref: %s)\n",
+                            thr.md5.hex_string.c_str(), md5_match ? "OK" : "FAIL", rh->md5.c_str());
+                        log_print("      CRC:  %s %s (ref: %s)\n",
+                            thr.crc32.hex_string.c_str(), crc_match ? "OK" : "FAIL", rh->crc32.c_str());
+                    }
+                } else {
+                    log_print("    Track %02u: SHA1=%s  MD5=%s  CRC=%s  (no ref: %s)\n",
+                        thr.track_number, thr.sha1.hex_string.c_str(),
+                        thr.md5.hex_string.c_str(), thr.crc32.hex_string.c_str(),
+                        ref_name.c_str());
+                }
+            }
+
+            tr.hash_ok = (tr.hash_tracks_matched == tr.hash_tracks_total) && (tr.hash_tracks_total > 0);
+            if (!tr.hash_ok && tr.hash_tracks_matched > 0)
+                log_print("  Hash partial: %d/%d tracks matched\n", tr.hash_tracks_matched, tr.hash_tracks_total);
+
+            // Display sheet hash (CUE/GDI) if present
+            if (!hash_result.sheet_content.empty()) {
+                std::string sheet_type = (hash_result.content_type == chdlite::ContentType::GDROM) ? "GDI" : "CUE";
+                log_print("  %s sheet (%zu bytes):\n", sheet_type.c_str(), hash_result.sheet_content.size());
+                log_print("    SHA1: %s\n", hash_result.sheet_hash.sha1.hex_string.c_str());
+                log_print("    MD5:  %s\n", hash_result.sheet_hash.md5.hex_string.c_str());
+                log_print("    CRC:  %s\n", hash_result.sheet_hash.crc32.hex_string.c_str());
+            }
+        } else {
+            log_print("  HASH FAILED: %s\n", hash_result.error_message.c_str());
+        }
+    }
+
     reader.close();
 
     // --- Extractor ---
@@ -167,8 +332,10 @@ int main(int argc, char* argv[])
     std::string rom_dir = "test_root/Roms/DiscRomsChd";
     std::string output_dir = "test_root/output";
 
+    std::string filter;
     if (argc >= 2) rom_dir = argv[1];
     if (argc >= 3) output_dir = argv[2];
+    if (argc >= 4) filter = argv[3];
 
     // Setup output dir and log file
     fs::create_directories(output_dir);
@@ -180,11 +347,23 @@ int main(int argc, char* argv[])
     log_print("ROM dir:    %s\n", rom_dir.c_str());
     log_print("Output dir: %s\n", output_dir.c_str());
 
+    // Load reference hashes
+    std::string ref_hash_path = (fs::path(rom_dir) / ".." / "chd-content-hashes").string();
+    load_reference_hashes(ref_hash_path);
+    if (!g_ref_hashes.empty())
+        log_print("Loaded %zu reference hashes from %s\n", g_ref_hashes.size(), ref_hash_path.c_str());
+
     // Find all .chd files recursively
     std::vector<std::string> chd_files;
     for (const auto& entry : fs::recursive_directory_iterator(rom_dir)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".chd")
+        if (entry.is_regular_file() && entry.path().extension() == ".chd") {
+            if (!filter.empty()) {
+                std::string p = entry.path().string();
+                if (p.find(filter) == std::string::npos)
+                    continue;
+            }
             chd_files.push_back(entry.path().string());
+        }
     }
 
     std::sort(chd_files.begin(), chd_files.end());
@@ -196,16 +375,21 @@ int main(int argc, char* argv[])
         results.push_back(test_one_chd(chd, output_dir));
 
     // Summary
-    int pass_read = 0, pass_extract = 0, fail = 0;
+    int pass_read = 0, pass_extract = 0, pass_hash = 0, fail = 0;
+    int total_tracks_matched = 0, total_tracks = 0;
     for (const auto& r : results) {
         if (r.read_ok) pass_read++;
         if (r.extract_ok) pass_extract++;
+        if (r.hash_ok) pass_hash++;
         if (!r.read_ok || !r.extract_ok) fail++;
+        total_tracks_matched += r.hash_tracks_matched;
+        total_tracks += r.hash_tracks_total;
     }
 
     log_print("\n========================================\n");
     log_print("SUMMARY: %zu files tested\n", results.size());
     log_print("  Read OK:     %d / %zu\n", pass_read, results.size());
+    log_print("  Hash OK:     %d / %zu  (%d/%d tracks matched)\n", pass_hash, results.size(), total_tracks_matched, total_tracks);
     log_print("  Extract OK:  %d / %zu\n", pass_extract, results.size());
     log_print("  Failures:    %d\n", fail);
 

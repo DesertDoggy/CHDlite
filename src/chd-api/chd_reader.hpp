@@ -42,8 +42,11 @@ public:
     std::vector<TrackInfo> get_tracks() const;
     bool read_sector(uint32_t lba, void* buffer, TrackType type) const;
 
-    // Hash operations - compute from actual content data
-    HashResult hash_content(HashAlgorithm algorithm) const;
+    // Hash operations - compute from actual extracted content data
+    // For CD/GD-ROM: hashes each track separately (matching chdman extractcd output)
+    // For DVD/HD/raw: hashes the full extracted binary
+    // Computes SHA-1, MD5, and CRC32 for each track in a single pass
+    ContentHashResult hash_content() const;
 
     // Fast hash from CHD header (no recalculation)
     std::string get_embedded_sha1() const;

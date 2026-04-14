@@ -45,8 +45,13 @@ public:
     // Hash operations - compute from actual extracted content data
     // For CD/GD-ROM: hashes each track separately (matching chdman extractcd output)
     // For DVD/HD/raw: hashes the full extracted binary
-    // Computes SHA-1, MD5, and CRC32 for each track in a single pass
-    ContentHashResult hash_content() const;
+    // flags selects which algorithms to compute (default: all)
+    ContentHashResult hash_content(HashFlags flags = HashFlags::All) const;
+
+    // Format hash result as text in the given output format
+    static std::string format_hash(const ContentHashResult& result,
+                                   HashOutputFormat format,
+                                   const std::string& stem = "");
 
     // Fast hash from CHD header (no recalculation)
     std::string get_embedded_sha1() const;

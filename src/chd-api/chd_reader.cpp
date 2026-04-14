@@ -10,6 +10,9 @@
 #include "chdcodec.h"
 #include "hashing.h"
 
+#define XXH_INLINE_ALL
+#include <xxhash.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -261,11 +264,29 @@ bool ChdReader::read_sector(uint32_t lba, void* buffer, TrackType type) const
 class HashSink : public ProcessorSink
 {
 public:
+    explicit HashSink(HashFlags flags = HashFlags::All)
+        : m_flags(flags), m_xxh3_state(nullptr)
+    {
+        if (has_flag(m_flags, HashFlags::XXH3_128))
+            m_xxh3_state = XXH3_createState();
+    }
+
+    ~HashSink() override
+    {
+        if (m_xxh3_state)
+            XXH3_freeState(m_xxh3_state);
+    }
+
     void on_track_begin(uint32_t track_num, TrackType track_type,
                         bool is_audio, uint32_t, uint32_t,
                         uint32_t, uint32_t, uint32_t) override
     {
-        m_sha1.reset(); m_md5.reset(); m_crc.reset(); m_sha256.reset();
+        if (has_flag(m_flags, HashFlags::SHA1))   m_sha1.reset();
+        if (has_flag(m_flags, HashFlags::MD5))    m_md5.reset();
+        if (has_flag(m_flags, HashFlags::CRC32))  m_crc.reset();
+        if (has_flag(m_flags, HashFlags::SHA256)) m_sha256.reset();
+        if (has_flag(m_flags, HashFlags::XXH3_128) && m_xxh3_state)
+            XXH3_128bits_reset(m_xxh3_state);
         m_bytes = 0;
         m_tracks.push_back({});
         auto& t = m_tracks.back();
@@ -276,10 +297,12 @@ public:
 
     void on_data(const void* data, uint32_t len) override
     {
-        m_sha1.append(data, len);
-        m_md5.append(data, len);
-        m_crc.append(data, len);
-        m_sha256.append(data, len);
+        if (has_flag(m_flags, HashFlags::SHA1))   m_sha1.append(data, len);
+        if (has_flag(m_flags, HashFlags::MD5))    m_md5.append(data, len);
+        if (has_flag(m_flags, HashFlags::CRC32))  m_crc.append(data, len);
+        if (has_flag(m_flags, HashFlags::SHA256)) m_sha256.append(data, len);
+        if (has_flag(m_flags, HashFlags::XXH3_128) && m_xxh3_state)
+            XXH3_128bits_update(m_xxh3_state, data, len);
         m_bytes += len;
     }
 
@@ -288,30 +311,48 @@ public:
         auto& t = m_tracks.back();
         t.data_bytes = m_bytes;
 
-        auto s = m_sha1.finish();
-        t.sha1 = { HashAlgorithm::SHA1, s.as_string(), {s.m_raw, s.m_raw + 20} };
-
-        auto m = m_md5.finish();
-        t.md5 = { HashAlgorithm::MD5, m.as_string(), {m.m_raw, m.m_raw + 16} };
-
-        auto c = m_crc.finish();
-        uint32_t val = c.m_raw;
-        char buf[9];
-        std::snprintf(buf, sizeof(buf), "%08x", val);
-        t.crc32 = { HashAlgorithm::CRC32, buf,
-                     { uint8_t(val >> 24), uint8_t(val >> 16), uint8_t(val >> 8), uint8_t(val) } };
-
-        auto h = m_sha256.finish();
-        t.sha256 = { HashAlgorithm::SHA256, h.as_string(), {h.m_raw, h.m_raw + 32} };
+        if (has_flag(m_flags, HashFlags::SHA1)) {
+            auto s = m_sha1.finish();
+            t.sha1 = { HashAlgorithm::SHA1, s.as_string(), {s.m_raw, s.m_raw + 20} };
+        }
+        if (has_flag(m_flags, HashFlags::MD5)) {
+            auto m = m_md5.finish();
+            t.md5 = { HashAlgorithm::MD5, m.as_string(), {m.m_raw, m.m_raw + 16} };
+        }
+        if (has_flag(m_flags, HashFlags::CRC32)) {
+            auto c = m_crc.finish();
+            uint32_t val = c.m_raw;
+            char buf[9];
+            std::snprintf(buf, sizeof(buf), "%08x", val);
+            t.crc32 = { HashAlgorithm::CRC32, buf,
+                         { uint8_t(val >> 24), uint8_t(val >> 16), uint8_t(val >> 8), uint8_t(val) } };
+        }
+        if (has_flag(m_flags, HashFlags::SHA256)) {
+            auto h = m_sha256.finish();
+            t.sha256 = { HashAlgorithm::SHA256, h.as_string(), {h.m_raw, h.m_raw + 32} };
+        }
+        if (has_flag(m_flags, HashFlags::XXH3_128) && m_xxh3_state) {
+            XXH128_hash_t h = XXH3_128bits_digest(m_xxh3_state);
+            char buf[33];
+            std::snprintf(buf, sizeof(buf), "%016llx%016llx",
+                          (unsigned long long)h.high64, (unsigned long long)h.low64);
+            // Store 16 raw bytes: high64 big-endian then low64 big-endian
+            std::vector<uint8_t> raw(16);
+            for (int i = 7; i >= 0; --i) { raw[7 - i] = uint8_t(h.high64 >> (i * 8)); }
+            for (int i = 7; i >= 0; --i) { raw[15 - i] = uint8_t(h.low64 >> (i * 8)); }
+            t.xxh3_128 = { HashAlgorithm::SHA1 /*placeholder*/, buf, std::move(raw) };
+        }
     }
 
     std::vector<TrackHashResult>& tracks() { return m_tracks; }
 
 private:
+    HashFlags            m_flags;
     util::sha1_creator   m_sha1;
     util::md5_creator    m_md5;
     util::crc32_creator  m_crc;
     util::sha256_creator m_sha256;
+    XXH3_state_t*        m_xxh3_state;
     uint64_t             m_bytes = 0;
     std::vector<TrackHashResult> m_tracks;
 };
@@ -352,7 +393,8 @@ static const char* cue_track_type_string(TrackType trktype, uint32_t datasize)
 class SheetSink : public ProcessorSink
 {
 public:
-    SheetSink(const std::string& stem) : m_stem(stem) {}
+    SheetSink(const std::string& stem, HashFlags flags = HashFlags::All)
+        : m_stem(stem), m_flags(flags) {}
 
     void on_begin(ContentType type, uint32_t num_tracks) override
     {
@@ -450,26 +492,40 @@ public:
         const void* data = m_content.data();
         uint32_t len = static_cast<uint32_t>(m_content.size());
 
-        util::sha1_creator   sha1;   sha1.append(data, len);
-        util::md5_creator    md5;    md5.append(data, len);
-        util::crc32_creator  crc;    crc.append(data, len);
-        util::sha256_creator sha256; sha256.append(data, len);
-
-        auto s = sha1.finish();
-        m_hash.sha1 = { HashAlgorithm::SHA1, s.as_string(), {s.m_raw, s.m_raw + 20} };
-
-        auto m = md5.finish();
-        m_hash.md5 = { HashAlgorithm::MD5, m.as_string(), {m.m_raw, m.m_raw + 16} };
-
-        auto c = crc.finish();
-        uint32_t val = c.m_raw;
-        char buf[9];
-        std::snprintf(buf, sizeof(buf), "%08x", val);
-        m_hash.crc32 = { HashAlgorithm::CRC32, buf,
-                         { uint8_t(val >> 24), uint8_t(val >> 16), uint8_t(val >> 8), uint8_t(val) } };
-
-        auto h = sha256.finish();
-        m_hash.sha256 = { HashAlgorithm::SHA256, h.as_string(), {h.m_raw, h.m_raw + 32} };
+        if (has_flag(m_flags, HashFlags::SHA1)) {
+            util::sha1_creator sha1; sha1.append(data, len);
+            auto s = sha1.finish();
+            m_hash.sha1 = { HashAlgorithm::SHA1, s.as_string(), {s.m_raw, s.m_raw + 20} };
+        }
+        if (has_flag(m_flags, HashFlags::MD5)) {
+            util::md5_creator md5; md5.append(data, len);
+            auto m = md5.finish();
+            m_hash.md5 = { HashAlgorithm::MD5, m.as_string(), {m.m_raw, m.m_raw + 16} };
+        }
+        if (has_flag(m_flags, HashFlags::CRC32)) {
+            util::crc32_creator crc; crc.append(data, len);
+            auto c = crc.finish();
+            uint32_t val = c.m_raw;
+            char buf[9];
+            std::snprintf(buf, sizeof(buf), "%08x", val);
+            m_hash.crc32 = { HashAlgorithm::CRC32, buf,
+                             { uint8_t(val >> 24), uint8_t(val >> 16), uint8_t(val >> 8), uint8_t(val) } };
+        }
+        if (has_flag(m_flags, HashFlags::SHA256)) {
+            util::sha256_creator sha256; sha256.append(data, len);
+            auto h = sha256.finish();
+            m_hash.sha256 = { HashAlgorithm::SHA256, h.as_string(), {h.m_raw, h.m_raw + 32} };
+        }
+        if (has_flag(m_flags, HashFlags::XXH3_128)) {
+            XXH128_hash_t h = XXH3_128bits(data, len);
+            char buf[33];
+            std::snprintf(buf, sizeof(buf), "%016llx%016llx",
+                          (unsigned long long)h.high64, (unsigned long long)h.low64);
+            std::vector<uint8_t> raw(16);
+            for (int i = 7; i >= 0; --i) { raw[7 - i] = uint8_t(h.high64 >> (i * 8)); }
+            for (int i = 7; i >= 0; --i) { raw[15 - i] = uint8_t(h.low64 >> (i * 8)); }
+            m_hash.xxh3_128 = { HashAlgorithm::SHA1 /*placeholder*/, buf, std::move(raw) };
+        }
 
         m_hash.track_number = 0;
         m_hash.type = TrackType::Mode1;
@@ -483,6 +539,7 @@ public:
 
 private:
     std::string m_stem;
+    HashFlags m_flags;
     bool m_gdi = false;
     uint32_t m_num_tracks = 0;
 
@@ -502,7 +559,7 @@ private:
     TrackHashResult m_hash;
 };
 
-ContentHashResult ChdReader::hash_content() const
+ContentHashResult ChdReader::hash_content(HashFlags flags) const
 {
     ContentHashResult result = {};
     result.success = false;
@@ -525,9 +582,9 @@ ContentHashResult ChdReader::hash_content() const
         result.chd_raw_sha1 = raw.as_string();
 
     // Use the unified processor to iterate content
-    HashSink hash_sink;
+    HashSink hash_sink(flags);
     std::string stem = path_stem(m_impl->filepath);
-    SheetSink sheet_sink(stem);
+    SheetSink sheet_sink(stem, flags);
     std::vector<ProcessorSink*> sinks = { &hash_sink, &sheet_sink };
     auto proc = ChdProcessor::process(m_impl->filepath, sinks);
 
@@ -593,6 +650,169 @@ bool ChdReader::is_chd_file(const std::string& path)
     char magic[8] = {};
     f.read(magic, 8);
     return f.good() && std::memcmp(magic, "MComprHD", 8) == 0;
+}
+
+// ======================> format_hash
+
+static std::string content_type_string(ContentType ct)
+{
+    switch (ct)
+    {
+    case ContentType::CDROM:    return "CD-ROM";
+    case ContentType::GDROM:    return "GD-ROM";
+    case ContentType::DVD:      return "DVD";
+    case ContentType::HardDisk: return "HardDisk";
+    case ContentType::LaserDisc:return "LaserDisc";
+    case ContentType::Raw:      return "Raw";
+    default:                    return "Unknown";
+    }
+}
+
+static std::string track_filename(const std::string& stem, const ContentHashResult& result,
+                                  const TrackHashResult& thr)
+{
+    bool is_cd = (result.content_type == ContentType::CDROM ||
+                  result.content_type == ContentType::GDROM);
+    if (!is_cd)
+        return stem + ((result.content_type == ContentType::DVD) ? ".iso" : ".bin");
+
+    bool gdi = (result.content_type == ContentType::GDROM);
+    if (gdi) {
+        char buf[8];
+        std::snprintf(buf, sizeof(buf), "%02u", thr.track_number);
+        return stem + buf + (thr.is_audio ? ".raw" : ".bin");
+    }
+    if (result.tracks.size() == 1)
+        return stem + ".bin";
+
+    char buf[8];
+    if (result.tracks.size() >= 10)
+        std::snprintf(buf, sizeof(buf), "%02u", thr.track_number);
+    else
+        std::snprintf(buf, sizeof(buf), "%u", thr.track_number);
+    return stem + " (Track " + buf + ").bin";
+}
+
+static std::string sheet_filename(const std::string& stem, const ContentHashResult& result)
+{
+    return stem + ((result.content_type == ContentType::GDROM) ? ".gdi" : ".cue");
+}
+
+// JSON helper — escape a string for JSON
+static std::string json_escape(const std::string& s)
+{
+    std::string out;
+    out.reserve(s.size() + 2);
+    out += '"';
+    for (char c : s) {
+        switch (c) {
+        case '"':  out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\n': out += "\\n";  break;
+        case '\r': out += "\\r";  break;
+        case '\t': out += "\\t";  break;
+        default:   out += c;      break;
+        }
+    }
+    out += '"';
+    return out;
+}
+
+std::string ChdReader::format_hash(const ContentHashResult& result,
+                                   HashOutputFormat format,
+                                   const std::string& stem_override)
+{
+    std::string stem = stem_override.empty() ? "output" : stem_override;
+    std::ostringstream out;
+
+    switch (format)
+    {
+    case HashOutputFormat::Log:
+    {
+        out << "; CHDlite Hash - " << stem << "\n";
+        out << "; Content Type: " << content_type_string(result.content_type) << "\n";
+        out << "; Tracks: " << result.tracks.size() << "\n";
+        for (const auto& t : result.tracks) {
+            std::string fn = track_filename(stem, result, t);
+            out << fn << "\n";
+            if (!t.sha1.hex_string.empty())   out << "  SHA1:   " << t.sha1.hex_string << "\n";
+            if (!t.md5.hex_string.empty())     out << "  MD5:    " << t.md5.hex_string << "\n";
+            if (!t.crc32.hex_string.empty())   out << "  CRC32:  " << t.crc32.hex_string << "\n";
+            if (!t.sha256.hex_string.empty())  out << "  SHA256: " << t.sha256.hex_string << "\n";
+            if (!t.xxh3_128.hex_string.empty()) out << "  XXH3_128: " << t.xxh3_128.hex_string << "\n";
+        }
+        if (!result.sheet_content.empty()) {
+            std::string fn = sheet_filename(stem, result);
+            out << fn << "\n";
+            const auto& sh = result.sheet_hash;
+            if (!sh.sha1.hex_string.empty())   out << "  SHA1:   " << sh.sha1.hex_string << "\n";
+            if (!sh.md5.hex_string.empty())     out << "  MD5:    " << sh.md5.hex_string << "\n";
+            if (!sh.crc32.hex_string.empty())   out << "  CRC32:  " << sh.crc32.hex_string << "\n";
+            if (!sh.sha256.hex_string.empty())  out << "  SHA256: " << sh.sha256.hex_string << "\n";
+            if (!sh.xxh3_128.hex_string.empty()) out << "  XXH3_128: " << sh.xxh3_128.hex_string << "\n";
+        }
+        break;
+    }
+    case HashOutputFormat::SFV:
+    {
+        out << "; Generated by CHDlite\n";
+        for (const auto& t : result.tracks) {
+            std::string fn = track_filename(stem, result, t);
+            if (!t.crc32.hex_string.empty())
+                out << fn << " " << t.crc32.hex_string << "\n";
+        }
+        if (!result.sheet_content.empty()) {
+            std::string fn = sheet_filename(stem, result);
+            if (!result.sheet_hash.crc32.hex_string.empty())
+                out << fn << " " << result.sheet_hash.crc32.hex_string << "\n";
+        }
+        break;
+    }
+    case HashOutputFormat::JSON:
+    {
+        out << "{\n";
+        out << "  \"chd\": " << json_escape(stem + ".chd") << ",\n";
+        out << "  \"content_type\": " << json_escape(content_type_string(result.content_type)) << ",\n";
+        if (!result.chd_sha1.empty())
+            out << "  \"chd_sha1\": " << json_escape(result.chd_sha1) << ",\n";
+        if (!result.chd_raw_sha1.empty())
+            out << "  \"chd_raw_sha1\": " << json_escape(result.chd_raw_sha1) << ",\n";
+        out << "  \"tracks\": [\n";
+        for (size_t i = 0; i < result.tracks.size(); ++i) {
+            const auto& t = result.tracks[i];
+            std::string fn = track_filename(stem, result, t);
+            out << "    {\n";
+            out << "      \"track\": " << t.track_number << ",\n";
+            out << "      \"filename\": " << json_escape(fn) << ",\n";
+            out << "      \"bytes\": " << t.data_bytes << ",\n";
+            out << "      \"audio\": " << (t.is_audio ? "true" : "false");
+            if (!t.sha1.hex_string.empty())   out << ",\n      \"sha1\": " << json_escape(t.sha1.hex_string);
+            if (!t.md5.hex_string.empty())     out << ",\n      \"md5\": " << json_escape(t.md5.hex_string);
+            if (!t.crc32.hex_string.empty())   out << ",\n      \"crc32\": " << json_escape(t.crc32.hex_string);
+            if (!t.sha256.hex_string.empty())  out << ",\n      \"sha256\": " << json_escape(t.sha256.hex_string);
+            if (!t.xxh3_128.hex_string.empty()) out << ",\n      \"xxh3_128\": " << json_escape(t.xxh3_128.hex_string);
+            out << "\n    }" << (i + 1 < result.tracks.size() ? "," : "") << "\n";
+        }
+        out << "  ]";
+        if (!result.sheet_content.empty()) {
+            std::string fn = sheet_filename(stem, result);
+            const auto& sh = result.sheet_hash;
+            out << ",\n  \"sheet\": {\n";
+            out << "    \"filename\": " << json_escape(fn) << ",\n";
+            out << "    \"bytes\": " << result.sheet_content.size();
+            if (!sh.sha1.hex_string.empty())   out << ",\n    \"sha1\": " << json_escape(sh.sha1.hex_string);
+            if (!sh.md5.hex_string.empty())     out << ",\n    \"md5\": " << json_escape(sh.md5.hex_string);
+            if (!sh.crc32.hex_string.empty())   out << ",\n    \"crc32\": " << json_escape(sh.crc32.hex_string);
+            if (!sh.sha256.hex_string.empty())  out << ",\n    \"sha256\": " << json_escape(sh.sha256.hex_string);
+            if (!sh.xxh3_128.hex_string.empty()) out << ",\n    \"xxh3_128\": " << json_escape(sh.xxh3_128.hex_string);
+            out << "\n  }";
+        }
+        out << "\n}\n";
+        break;
+    }
+    }
+
+    return out.str();
 }
 
 } // namespace chdlite

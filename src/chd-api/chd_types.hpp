@@ -54,6 +54,31 @@ enum class HashAlgorithm
     SHA256
 };
 
+// ======================> Hash algorithm flags (bitmask for selecting which to compute)
+
+enum class HashFlags : uint32_t
+{
+    SHA1   = 1 << 0,
+    MD5    = 1 << 1,
+    CRC32  = 1 << 2,
+    SHA256 = 1 << 3,
+    XXH3_128 = 1 << 4,
+    All    = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4)
+};
+
+inline HashFlags operator|(HashFlags a, HashFlags b) { return HashFlags(uint32_t(a) | uint32_t(b)); }
+inline HashFlags operator&(HashFlags a, HashFlags b) { return HashFlags(uint32_t(a) & uint32_t(b)); }
+inline bool has_flag(HashFlags flags, HashFlags f) { return (uint32_t(flags) & uint32_t(f)) != 0; }
+
+// ======================> Hash output format
+
+enum class HashOutputFormat
+{
+    Log,     // human-readable text
+    SFV,     // Simple File Verification (filename CRC32)
+    JSON     // JSON object
+};
+
 // ======================> CD system detection for smart codec defaults
 
 enum class CdSystem
@@ -112,6 +137,7 @@ struct TrackHashResult
     HashResult  md5;
     HashResult  crc32;
     HashResult  sha256;
+    HashResult  xxh3_128;
 };
 
 struct ContentHashResult

@@ -403,6 +403,177 @@ int main(int argc, char* argv[])
 
     log_print("========================================\n");
 
+    // --- Hash flags & output format tests ---
+    // Use the first CHD found for targeted hash testing
+    if (!chd_files.empty()) {
+        const std::string& test_chd = chd_files.front();
+        std::string stem = fs::path(test_chd).stem().string();
+        log_print("\n========================================\n");
+        log_print("HASH FLAG & FORMAT TESTS: %s\n", test_chd.c_str());
+        log_print("========================================\n");
+
+        chdlite::ChdReader reader;
+        reader.open(test_chd);
+
+        // Reference: hash with All flags
+        auto ref = reader.hash_content(chdlite::HashFlags::All);
+        if (!ref.success) {
+            log_print("  HASH ALL FAILED: %s\n", ref.error_message.c_str());
+        } else {
+            log_print("  All:    SHA1=%s  MD5=%s  CRC=%s  SHA256=%s  XXH3=%s\n",
+                ref.tracks[0].sha1.hex_string.c_str(),
+                ref.tracks[0].md5.hex_string.c_str(),
+                ref.tracks[0].crc32.hex_string.c_str(),
+                ref.tracks[0].sha256.hex_string.c_str(),
+                ref.tracks[0].xxh3_128.hex_string.c_str());
+        }
+
+        // Test each individual flag
+        struct FlagTest {
+            const char* name;
+            chdlite::HashFlags flag;
+        };
+        FlagTest flag_tests[] = {
+            { "SHA1",     chdlite::HashFlags::SHA1     },
+            { "MD5",      chdlite::HashFlags::MD5      },
+            { "CRC32",    chdlite::HashFlags::CRC32    },
+            { "SHA256",   chdlite::HashFlags::SHA256   },
+            { "XXH3_128", chdlite::HashFlags::XXH3_128 },
+        };
+
+        bool all_flags_ok = true;
+        for (const auto& ft : flag_tests) {
+            auto t0 = std::chrono::steady_clock::now();
+            auto hr = reader.hash_content(ft.flag);
+            auto t1 = std::chrono::steady_clock::now();
+            double sec = std::chrono::duration<double>(t1 - t0).count();
+
+            if (!hr.success) {
+                log_print("  %s:  FAILED: %s\n", ft.name, hr.error_message.c_str());
+                all_flags_ok = false;
+                continue;
+            }
+
+            const auto& t = hr.tracks[0];
+            const auto& r = ref.tracks[0];
+            bool ok = true;
+            std::string computed;
+
+            // Get the computed value for this flag
+            if (ft.flag == chdlite::HashFlags::SHA1)          computed = t.sha1.hex_string;
+            else if (ft.flag == chdlite::HashFlags::MD5)      computed = t.md5.hex_string;
+            else if (ft.flag == chdlite::HashFlags::CRC32)    computed = t.crc32.hex_string;
+            else if (ft.flag == chdlite::HashFlags::SHA256)   computed = t.sha256.hex_string;
+            else if (ft.flag == chdlite::HashFlags::XXH3_128) computed = t.xxh3_128.hex_string;
+
+            // Match against reference
+            if (ft.flag == chdlite::HashFlags::SHA1)          ok = (computed == r.sha1.hex_string);
+            else if (ft.flag == chdlite::HashFlags::MD5)      ok = (computed == r.md5.hex_string);
+            else if (ft.flag == chdlite::HashFlags::CRC32)    ok = (computed == r.crc32.hex_string);
+            else if (ft.flag == chdlite::HashFlags::SHA256)   ok = (computed == r.sha256.hex_string);
+            else if (ft.flag == chdlite::HashFlags::XXH3_128) ok = (computed == r.xxh3_128.hex_string);
+
+            // Verify other fields are empty (only requested flag should be set)
+            if (ft.flag != chdlite::HashFlags::SHA1)     ok = ok && t.sha1.hex_string.empty();
+            if (ft.flag != chdlite::HashFlags::MD5)      ok = ok && t.md5.hex_string.empty();
+            if (ft.flag != chdlite::HashFlags::CRC32)    ok = ok && t.crc32.hex_string.empty();
+            if (ft.flag != chdlite::HashFlags::SHA256)   ok = ok && t.sha256.hex_string.empty();
+            if (ft.flag != chdlite::HashFlags::XXH3_128) ok = ok && t.xxh3_128.hex_string.empty();
+
+            log_print("  %-9s: %s  (%.1fs)  %s\n", ft.name, computed.c_str(), sec, ok ? "OK" : "FAIL");
+            if (!ok) all_flags_ok = false;
+        }
+        log_print("  Hash flags: %s\n", all_flags_ok ? "ALL OK" : "SOME FAILED");
+
+        // --- Output format tests ---
+        log_print("\n  --- Output Format Tests ---\n");
+        struct FormatTest {
+            const char* name;
+            const char* ext;
+            chdlite::HashOutputFormat fmt;
+        };
+        FormatTest format_tests[] = {
+            { "Log",  ".log",  chdlite::HashOutputFormat::Log  },
+            { "SFV",  ".sfv",  chdlite::HashOutputFormat::SFV  },
+            { "JSON", ".json", chdlite::HashOutputFormat::JSON },
+        };
+
+        std::string fmt_dir = (fs::path(output_dir) / "hash_formats").string();
+        fs::create_directories(fmt_dir);
+
+        // Write each format individually
+        for (const auto& ft : format_tests) {
+            std::string content = chdlite::ChdReader::format_hash(ref, ft.fmt, stem);
+            std::string path = (fs::path(fmt_dir) / (stem + ft.ext)).string();
+            std::ofstream out(path);
+            out << content;
+            out.close();
+            log_print("  %s: %zu bytes -> %s\n", ft.name, content.size(), path.c_str());
+        }
+
+        // Write per-algorithm verification files
+        struct VerifFile {
+            const char* ext;
+            const char* label;
+            // lambda-like: which field to use from TrackHashResult
+        };
+        auto write_verif = [&](const char* ext, const char* label,
+                               auto get_hash) {
+            std::string path = (fs::path(fmt_dir) / (stem + ext)).string();
+            std::ofstream out(path);
+            out << "; Generated by CHDlite\n";
+            for (const auto& t : ref.tracks) {
+                std::string fn = chdlite::ChdReader::format_hash(ref, chdlite::HashOutputFormat::Log, stem); // unused
+                // Build filename matching track_filename logic
+                std::string hash = get_hash(t);
+                if (!hash.empty()) {
+                    bool is_cd = (ref.content_type == chdlite::ContentType::CDROM ||
+                                  ref.content_type == chdlite::ContentType::GDROM);
+                    std::string fn;
+                    if (!is_cd)
+                        fn = stem + ((ref.content_type == chdlite::ContentType::DVD) ? ".iso" : ".bin");
+                    else if (ref.content_type == chdlite::ContentType::GDROM) {
+                        char buf[8]; std::snprintf(buf, sizeof(buf), "%02u", t.track_number);
+                        fn = stem + buf + (t.is_audio ? ".raw" : ".bin");
+                    } else if (ref.tracks.size() == 1)
+                        fn = stem + ".bin";
+                    else {
+                        char buf[8];
+                        if (ref.tracks.size() >= 10)
+                            std::snprintf(buf, sizeof(buf), "%02u", t.track_number);
+                        else
+                            std::snprintf(buf, sizeof(buf), "%u", t.track_number);
+                        fn = stem + " (Track " + buf + ").bin";
+                    }
+                    out << hash << " *" << fn << "\n";
+                }
+            }
+            if (!ref.sheet_content.empty()) {
+                std::string sh = get_hash(ref.sheet_hash);
+                if (!sh.empty()) {
+                    std::string fn = stem + ((ref.content_type == chdlite::ContentType::GDROM) ? ".gdi" : ".cue");
+                    out << sh << " *" << fn << "\n";
+                }
+            }
+            out.close();
+            auto sz = fs::file_size(path);
+            log_print("  %s: %llu bytes -> %s\n", label, (unsigned long long)sz, path.c_str());
+        };
+
+        write_verif(".md5", "MD5", [](const chdlite::TrackHashResult& t) { return t.md5.hex_string; });
+        write_verif(".sha1", "SHA1", [](const chdlite::TrackHashResult& t) { return t.sha1.hex_string; });
+        write_verif(".sha256", "SHA256", [](const chdlite::TrackHashResult& t) { return t.sha256.hex_string; });
+        write_verif(".xxhash3_128", "XXH3_128", [](const chdlite::TrackHashResult& t) { return t.xxh3_128.hex_string; });
+
+        // Print each format to log for verification
+        for (const auto& ft : format_tests) {
+            std::string content = chdlite::ChdReader::format_hash(ref, ft.fmt, stem);
+            log_print("\n  --- %s Output ---\n%s", ft.name, content.c_str());
+        }
+
+        reader.close();
+    }
+
     if (g_log) std::fclose(g_log);
     return fail > 0 ? 1 : 0;
 }

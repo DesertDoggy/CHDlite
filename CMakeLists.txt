@@ -17,6 +17,7 @@ endif()
 find_package(ZLIB REQUIRED)
 find_package(zstd CONFIG REQUIRED)
 find_package(FLAC CONFIG REQUIRED)
+find_package(xxHash CONFIG REQUIRED)
 
 # utf8proc
 find_package(utf8proc CONFIG REQUIRED)
@@ -92,6 +93,7 @@ target_link_libraries(mame_chd_core
         FLAC::FLAC
         FLAC::FLAC++
         lzma_sdk
+        xxHash::xxhash
 )
 
 target_link_libraries(mame_chd_core PUBLIC utf8proc::utf8proc)

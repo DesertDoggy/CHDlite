@@ -1,0 +1,11 @@
+{
+  "name": "chdlite",
+  "version": "0.1.0",
+  "description": "Cross-platform CHD file library and tools",
+  "dependencies": [
+    "zlib",
+    "zstd",
+    "libflac",
+    "utf8proc"
+  ]
+}

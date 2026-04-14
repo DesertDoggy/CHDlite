@@ -31,3 +31,21 @@
 *.out
 *.app
 /test_root
+
+# Build directories
+build/
+cmake-build-*/
+out/
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# vcpkg
+vcpkg_installed/
+
+# macOS
+.DS_Store

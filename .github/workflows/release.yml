@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            name: macOS-arm64
+            triplet: arm64-osx
+          - os: ubuntu-latest
+            name: Linux-x86_64
+            triplet: x64-linux
+          - os: windows-latest
+            name: Windows-x86_64
+            triplet: x64-windows-static
+
+    runs-on: ${{ matrix.os }}
+    name: Build ${{ matrix.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '962e5e39f8a25f42522f51ffc574e0447653d462'
+
+      - name: Configure
+        run: >
+          cmake -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p staging
+          cp build/chdlite staging/
+          cd staging
+          ln -s chdlite chdread
+          ln -s chdlite chdhash
+          tar czf ../CHDlite-${{ github.ref_name }}-${{ matrix.name }}.tar.gz *
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p staging
+          cp build/Release/chdlite.exe staging/
+          cp build/Release/chdlite.exe staging/chdread.exe
+          cp build/Release/chdlite.exe staging/chdhash.exe
+          cd staging
+          7z a ../CHDlite-${{ github.ref_name }}-${{ matrix.name }}.zip *
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CHDlite-${{ matrix.name }}
+          path: CHDlite-${{ github.ref_name }}-*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            CHDlite-*.tar.gz
+            CHDlite-*.zip

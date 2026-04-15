@@ -49,3 +49,6 @@ vcpkg_installed/
 
 # macOS
 .DS_Store
+
+# References (large external repos, pull separately)
+References/

@@ -32,26 +32,26 @@ jobs:
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v10
+        with:
+          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+          appendedCacheKey: ${{ hashFiles( '**/vcpkg.json' ) }}
 
-      - name: Set reusable strings
-        id: strings
+      - name: Configure with CMake
         shell: bash
         run: |
-          echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
+          cmake -B build \
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} \
+            -DCMAKE_BUILD_TYPE=Release
 
-      - name: Configure CMake
-        run: >
-          cmake -B ${{ steps.strings.outputs.build-output-dir }}
-          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
-          -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
-          -DCMAKE_BUILD_TYPE=Release
-          -S ${{ github.workspace }}
-
-      - name: Build
-        run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config Release
+      - name: Build with CMake
+        shell: bash
+        run: |
+          cmake --build build --config Release
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
+        shell: bash
         run: |
           mkdir -p staging
           cp build/chdlite staging/

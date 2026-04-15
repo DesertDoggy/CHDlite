@@ -1,0 +1,116 @@
+# CHDlite
+
+Cross-platform CHD disc image library and command-line tool. Read, hash, extract, and create CHD files for CD, DVD, GD-ROM, and raw disc formats.
+
+Built on MAME's CHD/chdman implementation with a C++
+
+## License
+
+**AGPL-3.0**
+(This project incorporates CHD/cdhman code from [MAME](https://github.com/mamedev/mame), which is licensed under BSD-3-Clause. If for what ever miraculous reason the MAME development team wishes to use or incorporate code/ideas from CHDlite back into MAME, this project's license can be lowered, limiting it to the mamedev team, on notice.)
+
+## Features
+
+- **Read** CHD headers, tracks, and metadata
+- **Hash** CHD content (SHA-1, MD5, CRC32, SHA-256, XXH3)
+- **Extract** CHD to CUE/BIN, GDI, or raw image
+- **Create** CHD from CUE/BIN, GDI, ISO, or raw image
+- **Auto-detect** content type: CD-ROM, DVD, GD-ROM (Dreamcast), Hard Disk, Raw
+- **System detection**: PS1, PS2, PSP, Saturn, Mega CD, 3DO, Dreamcast (PC Engine detection is WIP)
+- **Drag-and-drop** support — drop files or folders onto the binary
+- **Batch processing** — process multiple files and folders in one invocation
+- **chdman-compatible** commands for drop-in replacement workflows
+- **Usable as a C++ static library** in other projects
+
+## Downloads
+
+Pre-built binaries for macOS, Linux, and Windows are available on the [Releases](https://github.com/DesertDoggy/CHDlite/releases) page.
+
+Each release contains three binaries:
+
+| Binary     | Drag-and-drop default       |
+|------------|-----------------------------|
+| `chdlite`  | Auto (extract or create)    | Main binary
+| `chdread`  | Display CHD info            | 
+| `chdhash`  | Hash CHD content            |
+
+Windows
+chdlite/chdread/chdhash are same binary with different defaults.
+Mac/Linux
+chdread/chdhash are symlinks of chdlite.
+
+## Usage
+
+```
+chdlite <command> [options]
+```
+
+### Generic commands
+
+```
+extract  <input.chd> [-o output] [options]    Extract CHD to disc image
+create   <input>     [-o output.chd] [options] Create CHD from disc image
+read     <input.chd> [options]                 Read CHD info (header + tracks)
+hash     <input.chd> [-hash sha1,md5,...] [options] Hash CHD content
+auto     <input>     [options]                 Auto: .chd → extract, else → create
+```
+
+### chdman-compatible commands
+
+```
+createcd   -i <input> -o <output.chd>    Create CD CHD
+createdvd  -i <input> -o <output.chd>    Create DVD CHD
+createraw  -i <input> -o <output.chd>    Create raw CHD
+extractcd  -i <input.chd> -o <output>    Extract CD from CHD
+extractdvd -i <input.chd> -o <output>    Extract DVD from CHD
+extractraw -i <input.chd> -o <output>    Extract raw from CHD
+```
+
+### Options
+
+```
+-i, --input <file>           Input file
+-o, --output <file>          Output file
+-f, --force                  Overwrite existing output
+-c, --compression <codecs>   Compression: none, zlib, zstd, lzma, flac, cdzl, cdzs, cdlz, cdfl
+-hs, --hunksize <bytes>      Hunk size in bytes
+-us, --unitsize <bytes>      Unit size in bytes
+-np, --numprocessors <n>     Number of compression threads
+-ob, --outputbin <file>      Output bin filename template (%t = track#)
+-sb, --splitbin              Split output into per-track bin files
+--no-splitbin                Single bin file for all tracks
+-hash <algorithms>           Hash algorithms: sha1, md5, crc32, sha256, xxh3
+-log <level>                 Log level: info, error, none
+-v, --verbose                Verbose output
+```
+
+### Examples
+
+```bash
+# Read CHD info
+chdlite read game.chd
+
+# Hash a CHD
+chdlite hash game.chd
+chdlite hash game.chd -hash sha1,md5
+
+# Extract CD image
+chdlite extract game.chd -o game.cue
+chdlite extractcd game.chd -o game.cue
+
+# Extract with split bin files
+chdlite extract game.chd -o game.cue -sb
+
+# Create CHD from CUE/BIN
+chdlite create game.cue -o game.chd
+chdlite createcd game.cue -o game.chd
+
+# Drag-and-drop style (auto-detect action)
+chdlite game.chd              # extracts
+chdlite game.cue              # creates CHD
+
+# Batch process a folder
+chdlite /path/to/chd/folder/
+```
+
+

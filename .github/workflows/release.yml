@@ -30,15 +30,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v10
-        with:
-          vcpkgGitCommitId: 'a6647ea364eaf231faa6c2ae4ff1d44acf56df6c'
-
-      - name: Install vcpkg dependencies
+      - name: Clone vcpkg repo
         shell: bash
-        run: |
-          ./vcpkg/vcpkg install --triplet=${{ matrix.triplet }}
+        run: git clone https://github.com/Microsoft/vcpkg.git ${{ github.workspace }}/vcpkg
+
+      - name: Bootstrap vcpkg (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: ${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh
+
+      - name: Bootstrap vcpkg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ${{ github.workspace }}/vcpkg/bootstrap-vcpkg.bat
+
+      - name: Install dependencies
+        shell: bash
+        run: ${{ github.workspace }}/vcpkg/vcpkg install --triplet=${{ matrix.triplet }}
 
       - name: Configure with CMake
         shell: bash
@@ -50,8 +58,7 @@ jobs:
 
       - name: Build with CMake
         shell: bash
-        run: |
-          cmake --build build --config Release
+        run: cmake --build build --config Release
 
       - name: Package (Unix)
         if: runner.os != 'Windows'

@@ -32,6 +32,10 @@ if(WIN32)
         set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${CONF_UPPER} "${CMAKE_SOURCE_DIR}/Release/lib")
         set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${CONF_UPPER} "${CMAKE_SOURCE_DIR}/Release/lib")
     endforeach()
+elseif(APPLE)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/Release/bin")
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/Release/lib")
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/Release/lib")
 endif()
 
 # Compiler options
@@ -194,6 +198,17 @@ set_target_properties(chdlite_shared PROPERTIES
     WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
 
+# macOS-specific dylib configuration
+if(APPLE)
+    set_target_properties(chdlite_shared PROPERTIES
+        MACOSX_RPATH ON
+        INSTALL_RPATH "@loader_path/../lib"
+        BUILD_RPATH "@loader_path/../lib"
+        VERSION ${PROJECT_VERSION}
+        SOVERSION ${PROJECT_VERSION_MAJOR}
+    )
+endif()
+
 target_include_directories(chdlite_shared
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/chd-api>
@@ -204,6 +219,14 @@ target_include_directories(chdlite_shared
 )
 
 target_link_libraries(chdlite_shared PUBLIC mame_chd_core)
+
+# Self-sign dylib on macOS to avoid Gatekeeper warnings
+if(APPLE)
+    add_custom_command(TARGET chdlite_shared POST_BUILD
+        COMMAND codesign -s - --force --deep "$<TARGET_FILE:chdlite_shared>"
+        COMMENT "Self-signing chdlite dylib"
+    )
+endif()
 
 # =====================================================================
 # Install rules (cmake --install build --prefix /some/path)

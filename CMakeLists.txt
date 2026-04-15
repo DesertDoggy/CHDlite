@@ -1,16 +1,37 @@
 cmake_minimum_required(VERSION 3.20)
+
+# Force static linking and Windows triplet setup
+if(WIN32 AND NOT DEFINED VCPKG_TARGET_TRIPLET)
+    set(VCPKG_TARGET_TRIPLET x64-windows-static)
+endif()
+
+# Set vcpkg toolchain if not already set
+if(NOT CMAKE_TOOLCHAIN_FILE AND WIN32)
+    set(CMAKE_TOOLCHAIN_FILE "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/vcpkg/scripts/buildsystems/vcpkg.cmake")
+endif()
+
 project(CHDlite VERSION 0.1.0 LANGUAGES C CXX)
+
+set(BUILD_SHARED_LIBS OFF)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-# Output directories for v0.1.0 release
+# Output directories for release
 if(WIN32)
-    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/Releases/v0.1.0/win/bin")
-    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/Releases/v0.1.0/win/lib")
-    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/Releases/v0.1.0/win/lib")
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/Release/bin")
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/Release/lib")
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/Release/lib")
+    
+    # Override for multi-config generators (Visual Studio)
+    foreach(CONF Release Debug RelWithDebInfo MinSizeRel)
+        string(TOUPPER ${CONF} CONF_UPPER)
+        set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${CONF_UPPER} "${CMAKE_SOURCE_DIR}/Release/bin")
+        set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${CONF_UPPER} "${CMAKE_SOURCE_DIR}/Release/lib")
+        set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${CONF_UPPER} "${CMAKE_SOURCE_DIR}/Release/lib")
+    endforeach()
 endif()
 
 # Compiler options
@@ -75,6 +96,7 @@ set(MAME_OSD_SOURCES
     src/mame/osd/osdcore_impl.cpp
     src/mame/osd/osdfile_impl.cpp
     src/mame/osd/osdsync.cpp
+    src/mame/osd/strconv.cpp
 )
 
 # strconv.cpp is Windows-specific and conflicts with osdcore_impl.cpp on Windows

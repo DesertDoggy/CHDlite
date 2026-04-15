@@ -84,9 +84,11 @@ class CdFileSink : public ProcessorSink
 {
 public:
     CdFileSink(const std::string& out_dir, const std::string& stem,
-               bool gdi_mode)
+               bool gdi_mode, bool split_bin,
+               const std::string& bin_template = {})
         : m_out_dir(out_dir), m_stem(stem)
-        , m_gdi_mode(gdi_mode) {}
+        , m_gdi_mode(gdi_mode), m_split_bin(split_bin)
+        , m_bin_template(bin_template) {}
 
     void on_begin(ContentType type, uint32_t num_tracks) override
     {
@@ -113,7 +115,22 @@ public:
         m_track_frames = 0;
 
         // Determine bin filename
-        if (m_num_tracks == 1 && !m_gdi_mode)
+        if (!m_bin_template.empty())
+        {
+            // User-specified template: replace %t with track number
+            m_cur_bin_name = m_bin_template;
+            char tbuf[8];
+            std::snprintf(tbuf, sizeof(tbuf), "%02u", track_num);
+            auto pos = m_cur_bin_name.find("%t");
+            if (pos != std::string::npos)
+                m_cur_bin_name.replace(pos, 2, tbuf);
+        }
+        else if (!m_split_bin && !m_gdi_mode)
+        {
+            // Single bin file for all tracks
+            m_cur_bin_name = m_stem + ".bin";
+        }
+        else if (m_num_tracks == 1 && !m_gdi_mode)
         {
             m_cur_bin_name = m_stem + ".bin";
         }
@@ -136,10 +153,23 @@ public:
         }
 
         std::string bin_path = path_join(m_out_dir, m_cur_bin_name);
-        m_cur_file.open(bin_path, std::ios::binary);
-        if (!m_cur_file)
-            m_error = "Cannot create track file: " + bin_path;
-        m_output_files.push_back(bin_path);
+        bool is_same_file = (!m_split_bin && !m_gdi_mode && m_cur_file.is_open());
+        if (!is_same_file)
+        {
+            if (m_cur_file.is_open()) m_cur_file.close();
+            auto mode = std::ios::binary;
+            if (!m_split_bin && !m_gdi_mode && m_cur_track > 1)
+                mode |= std::ios::app;
+            m_cur_file.open(bin_path, mode);
+            if (!m_cur_file)
+                m_error = "Cannot create track file: " + bin_path;
+            // Only add to output_files once for single-bin mode
+            bool already_listed = false;
+            for (auto& f : m_output_files) if (f == bin_path) { already_listed = true; break; }
+            if (!already_listed)
+                m_output_files.push_back(bin_path);
+        }
+        m_cur_track_byte_ofs = m_cumulative_bytes;
     }
 
     void on_data(const void* data, uint32_t len) override
@@ -148,13 +178,15 @@ public:
         {
             m_cur_file.write(reinterpret_cast<const char*>(data), len);
             m_bytes_written += len;
+            m_cumulative_bytes += len;
         }
         m_track_frames++;
     }
 
     void on_track_end() override
     {
-        m_cur_file.close();
+        if (m_split_bin || m_gdi_mode)
+            m_cur_file.close();
 
         // Write metadata entry
         if (m_gdi_mode)
@@ -170,25 +202,32 @@ public:
         }
         else
         {
-            m_meta << "FILE \"" << m_cur_bin_name << "\" BINARY\n";
+            // In single-bin mode, only emit FILE once (first track)
+            if (m_split_bin || m_cur_track == 1)
+                m_meta << "FILE \"" << m_cur_bin_name << "\" BINARY\n";
             char tnum[8];
             std::snprintf(tnum, sizeof(tnum), "%02u", m_cur_track);
             m_meta << "  TRACK " << tnum << " "
                    << cue_track_type_string(m_cur_type, m_cur_datasize) << "\n";
-            // Pregap handling (split-bin: each file starts at offset 0)
+
+            // For single-bin: INDEX offsets are cumulative frames from start of file
+            // For split-bin: each file starts at offset 0
+            uint32_t base_frames = m_split_bin ? 0
+                : static_cast<uint32_t>(m_cur_track_byte_ofs / m_cur_datasize);
+
             if (m_cur_pregap > 0 && m_cur_pgdatasize == 0)
             {
                 m_meta << "    PREGAP " << msf_from_frames(m_cur_pregap) << "\n";
-                m_meta << "    INDEX 01 00:00:00\n";
+                m_meta << "    INDEX 01 " << msf_from_frames(base_frames) << "\n";
             }
             else if (m_cur_pregap > 0 && m_cur_pgdatasize > 0)
             {
-                m_meta << "    INDEX 00 00:00:00\n";
-                m_meta << "    INDEX 01 " << msf_from_frames(m_cur_pregap) << "\n";
+                m_meta << "    INDEX 00 " << msf_from_frames(base_frames) << "\n";
+                m_meta << "    INDEX 01 " << msf_from_frames(base_frames + m_cur_pregap) << "\n";
             }
             else
             {
-                m_meta << "    INDEX 01 00:00:00\n";
+                m_meta << "    INDEX 01 " << msf_from_frames(base_frames) << "\n";
             }
             if (m_cur_postgap > 0)
                 m_meta << "    POSTGAP " << msf_from_frames(m_cur_postgap) << "\n";
@@ -206,6 +245,8 @@ private:
     std::string m_out_dir;
     std::string m_stem;
     bool m_gdi_mode;
+    bool m_split_bin;
+    std::string m_bin_template;
     uint32_t m_num_tracks = 0;
 
     uint32_t m_cur_track = 0;
@@ -226,6 +267,8 @@ private:
     mutable std::string m_meta_str;
     std::vector<std::string> m_output_files;
     uint64_t m_bytes_written = 0;
+    uint64_t m_cumulative_bytes = 0;
+    uint64_t m_cur_track_byte_ofs = 0;
 };
 
 // ======================> File-writing sink for raw/DVD/HD
@@ -276,7 +319,7 @@ ChdExtractor& ChdExtractor::operator=(ChdExtractor&&) noexcept = default;
 ExtractionResult ChdExtractor::extract(const std::string& chd_path,
                                        const ExtractOptions& options)
 {
-    return extract(chd_path, std::string(), options);
+    return extract(chd_path, options.parent_chd_path, options);
 }
 
 ExtractionResult ChdExtractor::extract(const std::string& chd_path,
@@ -330,7 +373,9 @@ ExtractionResult ChdExtractor::extract(const std::string& chd_path,
             ? (stem + meta_ext) : options.output_filename;
         std::string meta_path = path_join(out_dir, meta_filename);
 
-        CdFileSink sink(out_dir, stem, gdi_mode);
+        // GDI and GD-ROM CUE always force split
+        bool split = options.split_bin || gdi_mode;
+        CdFileSink sink(out_dir, stem, gdi_mode, split, options.output_bin);
         std::vector<ProcessorSink*> sinks = { &sink };
 
         auto proc_result = ChdProcessor::process(chd_path, sinks, options.progress_callback);

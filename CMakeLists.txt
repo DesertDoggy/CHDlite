@@ -142,3 +142,13 @@ target_link_libraries(detect_test PRIVATE chdlite)
 
 add_executable(archive_test tests/archive_test.cpp)
 target_link_libraries(archive_test PRIVATE chdlite)
+
+add_executable(cli_test tests/cli_test.cpp)
+# cli_test only uses std::system() to invoke the CLI binary, no library link needed
+
+# =====================================================================
+# CLI tool
+# =====================================================================
+add_executable(chdlite_cli src/cli/chdlite_cli.cpp)
+target_link_libraries(chdlite_cli PRIVATE chdlite)
+set_target_properties(chdlite_cli PROPERTIES OUTPUT_NAME chdlite)

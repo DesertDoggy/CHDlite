@@ -226,9 +226,30 @@ struct ArchiveResult
 struct ExtractOptions
 {
     std::string output_dir;
-    std::string output_filename;   // override auto-generated name
+    std::string output_filename;   // override auto-generated name (chdman: --output)
     bool        force_bin_cue = false;  // force BIN/CUE instead of GDI
     bool        force_raw = false;      // extract raw hunks (no format interpretation)
+
+    // CD-specific (chdman extractcd equivalents)
+    std::string output_bin;             // override bin filename template (chdman: --outputbin)
+    bool        split_bin = true;       // split into per-track bin files (chdman: --splitbin, default true)
+
+    // Raw/DVD/HD partial extraction (chdman extractraw/extracthd/extractdvd)
+    uint64_t    input_start_byte = 0;   // starting byte offset (chdman: --inputstartbyte)
+    uint64_t    input_start_hunk = 0;   // starting hunk offset (chdman: --inputstarthunk)
+    uint64_t    input_bytes = 0;        // number of bytes to extract, 0 = all (chdman: --inputbytes)
+    uint64_t    input_hunks = 0;        // number of hunks to extract, 0 = all (chdman: --inputhunks)
+
+    // LaserDisc (chdman extractld)
+    uint64_t    input_start_frame = 0;  // starting frame (chdman: --inputstartframe)
+    uint64_t    input_frames = 0;       // number of frames, 0 = all (chdman: --inputframes)
+
+    // General
+    std::string parent_chd_path;        // parent CHD for delta (chdman: --inputparent)
+    bool        force_overwrite = false; // overwrite existing output (chdman: --force)
+
+    // Hash: compute hashes of extracted content alongside extraction
+    HashFlags   hash = HashFlags(0);    // 0 = no hashing, or combine SHA1|MD5|CRC32 etc.
 
     // Progress callback: (bytes_processed, total_bytes) → return false to cancel
     std::function<bool(uint64_t, uint64_t)> progress_callback;

@@ -179,13 +179,40 @@ target_include_directories(chdlite
 target_link_libraries(chdlite PUBLIC mame_chd_core)
 
 # =====================================================================
+# CHDlite shared library (DLL on Windows, dylib on macOS, so on Linux)
+# =====================================================================
+add_library(chdlite_shared SHARED
+    src/chd-api/chd_reader.cpp
+    src/chd-api/chd_processor.cpp
+    src/chd-api/chd_extractor.cpp
+    src/chd-api/chd_archiver.cpp
+    src/chd-api/detect_system.cpp
+)
+
+set_target_properties(chdlite_shared PROPERTIES
+    OUTPUT_NAME chdlite
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+)
+
+target_include_directories(chdlite_shared
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/chd-api>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/chdlite>
+    PRIVATE
+        src/mame/util
+        src/mame/osd
+)
+
+target_link_libraries(chdlite_shared PUBLIC mame_chd_core)
+
+# =====================================================================
 # Install rules (cmake --install build --prefix /some/path)
 # Produces headers + static libs consumable via find_package(CHDlite)
 # =====================================================================
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-install(TARGETS chdlite mame_chd_core lzma_sdk
+install(TARGETS chdlite chdlite_shared mame_chd_core lzma_sdk
     EXPORT CHDliteTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )

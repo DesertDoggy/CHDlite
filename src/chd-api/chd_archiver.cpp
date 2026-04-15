@@ -3,6 +3,8 @@
 // chd_archiver.cpp - Archive (create CHD) implementation
 
 #include "chd_archiver.hpp"
+#include "chd_reader.hpp"
+#include "detect_system.hpp"
 
 #include "chd.h"
 #include "cdrom.h"
@@ -11,6 +13,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 
 namespace chdlite {
@@ -519,53 +522,24 @@ ArchiveResult ChdArchiver::archive_dvd(const std::string& input_path,
 }
 
 
-// ======================> .bin/.iso format detection
+// ======================> Sanitize filename for rename
 
-// CD-ROM sync pattern: 12 bytes at the start of every raw (2352-byte) sector
-static const uint8_t s_cd_sync[12] = {
-    0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00
-};
-
-// Detect whether a .bin/.iso/.img file is a CD-ROM image or DVD.
-// Returns "cd" or "dvd".
-static std::string detect_bin_format(const std::string& path)
+static std::string sanitize_filename(const std::string& title)
 {
-    std::ifstream f(path, std::ios::binary | std::ios::ate);
-    if (!f.is_open())
-        return "cd";  // fallback; archive_cd will report the real error
-
-    uint64_t size = static_cast<uint64_t>(f.tellg());
-    f.seekg(0);
-
-    // Check for raw CD sector sync pattern at offset 0
-    uint8_t header[16] = {};
-    f.read(reinterpret_cast<char*>(header), sizeof(header));
-
-    bool has_sync = (f.gcount() >= 12 && std::memcmp(header, s_cd_sync, 12) == 0);
-
-    if (has_sync) {
-        // Raw 2352-byte sectors → always CD-ROM
-        // Verify sync repeats at offset 2352
-        if (size >= 2 * 2352) {
-            f.seekg(2352);
-            uint8_t sync2[12] = {};
-            f.read(reinterpret_cast<char*>(sync2), 12);
-            if (f.gcount() >= 12 && std::memcmp(sync2, s_cd_sync, 12) == 0)
-                return "cd";
-        }
-        return "cd";  // single-sector or short image with sync → still CD
+    std::string out;
+    out.reserve(title.size());
+    for (char c : title) {
+        // Replace characters not safe for filenames
+        if (c == '/' || c == '\\' || c == ':' || c == '*' ||
+            c == '?' || c == '"' || c == '<' || c == '>' || c == '|')
+            out += '_';
+        else if (static_cast<unsigned char>(c) >= 0x20)
+            out += c;
     }
-
-    // No sync pattern → cooked 2048-byte sectors; distinguish CD vs DVD by size
-    // CD-ROM capacity: 700MB (standard) up to ~900MB (overburn)
-    // DVD single layer: 4.7GB
-    // Use 1GB as the threshold (generous for overburned CDs)
-    if (size > 1073741824ULL)
-        return "dvd";
-
-    // Small 2048-byte image → could be CD or small DVD; prefer CD since
-    // MAME's parse_iso handles it correctly as a single Mode 1 track
-    return "cd";
+    // Trim trailing dots/spaces (Windows compat)
+    while (!out.empty() && (out.back() == '.' || out.back() == ' '))
+        out.pop_back();
+    return out;
 }
 
 
@@ -575,35 +549,54 @@ ArchiveResult ChdArchiver::archive(const std::string& input_path,
                                    const std::string& output_path,
                                    const ArchiveOptions& options)
 {
-    // Determine format from explicit option or file extension
+    // Run pre-archive detection
+    bool need_title = options.detect_title || options.rename_to_title;
+    DetectionResult detection = detect_input(input_path, need_title);
+
+    // Determine format from explicit option or detection result
     std::string fmt = options.input_format;
-    if (fmt.empty())
-    {
+    if (fmt.empty()) {
         std::string ext = path_ext_lower(input_path);
         if (ext == ".cue" || ext == ".gdi" || ext == ".toc" || ext == ".nrg")
             fmt = "cd";
         else if (ext == ".iso" || ext == ".bin" || ext == ".img")
-        {
-            // Could be DVD or CD; detect from file content and size
-            fmt = detect_bin_format(input_path);
-        }
+            fmt = detection.format;  // "cd" or "dvd" from detect_input
         else
             fmt = "raw";
     }
 
+    ArchiveResult result;
+
     if (fmt == "cd" || fmt == "cue" || fmt == "gdi" || fmt == "toc" || fmt == "nrg" || fmt == "iso")
-    {
-        // For ISO-as-CD: parse_toc handles .iso files via parse_iso
-        return archive_cd(input_path, output_path, options);
-    }
+        result = archive_cd(input_path, output_path, options);
     else if (fmt == "dvd")
-    {
-        return archive_dvd(input_path, output_path, options);
-    }
+        result = archive_dvd(input_path, output_path, options);
     else
-    {
-        return archive_raw(input_path, output_path, options);
+        result = archive_raw(input_path, output_path, options);
+
+    // Populate detection results
+    result.detected_system = detection.system;
+    result.detected_title = detection.title;
+
+    // Rename output to title if requested and successful
+    if (result.success && options.rename_to_title && !detection.title.empty()) {
+        namespace fs = std::filesystem;
+        std::string safe_title = sanitize_filename(detection.title);
+        if (!safe_title.empty()) {
+            fs::path out(result.output_path);
+            fs::path new_path = out.parent_path() / (safe_title + ".chd");
+            try {
+                if (!fs::exists(new_path)) {
+                    fs::rename(out, new_path);
+                    result.output_path = new_path.string();
+                }
+            } catch (...) {
+                // Rename failed — keep original path, not a fatal error
+            }
+        }
     }
+
+    return result;
 }
 
 } // namespace chdlite

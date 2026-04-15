@@ -189,6 +189,37 @@ static TestResult test_one_chd(const std::string& chd_path, const std::string& o
 
     tr.read_ok = true;
 
+    // --- System detection ---
+    if (hdr.content_type == chdlite::ContentType::CDROM ||
+        hdr.content_type == chdlite::ContentType::GDROM ||
+        hdr.content_type == chdlite::ContentType::DVD)
+    {
+        // Normal detection (all loops, with title)
+        auto det_all = reader.detect_system(chdlite::DetectFlags::All, true);
+        log_print("  System (all):    %s\n", chdlite::system_name(det_all.system));
+        if (!det_all.title.empty())
+            log_print("  Title:           %s\n", det_all.title.c_str());
+
+        // Backup-only: skip sector 0 magic, run ISO 9660 + heuristic only
+        auto backup_flags = chdlite::DetectFlags::Iso9660 | chdlite::DetectFlags::Heuristic;
+        auto det_backup = reader.detect_system(backup_flags);
+        log_print("  System (backup): %s\n", chdlite::system_name(det_backup.system));
+
+        // For platforms detected via sector 0 (3DO, MegaCD, Saturn, Dreamcast on CD),
+        // backup may legitimately differ (fall to GenericCD). Log the comparison.
+        if (det_all.system != det_backup.system) {
+            // Expected: sector-0-only platforms won't match in backup mode
+            bool expected_diff = (det_all.system == chdlite::CdSystem::ThreeDO ||
+                                  det_all.system == chdlite::CdSystem::MegaCD ||
+                                  det_all.system == chdlite::CdSystem::Saturn ||
+                                  (det_all.system == chdlite::CdSystem::Dreamcast &&
+                                   hdr.content_type == chdlite::ContentType::GDROM));
+            log_print("  System diff: %s (all=%s backup=%s)\n",
+                expected_diff ? "EXPECTED" : "UNEXPECTED",
+                chdlite::system_name(det_all.system), chdlite::system_name(det_backup.system));
+        }
+    }
+
     // --- Content hashing ---
     log_print("  Hashing content...\n");
     {

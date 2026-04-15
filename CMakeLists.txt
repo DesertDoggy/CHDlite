@@ -136,3 +136,6 @@ target_link_libraries(chdlite PUBLIC mame_chd_core)
 # =====================================================================
 add_executable(smoke_test tests/smoke_test.cpp)
 target_link_libraries(smoke_test PRIVATE chdlite)
+
+add_executable(detect_test tests/detect_test.cpp)
+target_link_libraries(detect_test PRIVATE chdlite)

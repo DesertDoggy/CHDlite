@@ -44,7 +44,10 @@ public:
     bool read_sector(uint32_t lba, void* buffer, TrackType type) const;
 
     // Platform/system detection (CD/GD/DVD content)
-    CdSystem detect_system() const { return chdlite::detect_system(*this); }
+    DetectionResult detect_system(DetectFlags flags = DetectFlags::All, bool detect_title = false) const
+    {
+        return chdlite::detect_system(*this, flags, detect_title);
+    }
 
     // Hash operations - compute from actual extracted content data
     // For CD/GD-ROM: hashes each track separately (matching chdman extractcd output)

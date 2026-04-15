@@ -216,6 +216,7 @@ struct ArchiveResult
     uint64_t    output_bytes;
     double      compression_ratio;
     CdSystem    detected_system;
+    std::string detected_title;    // game title (populated when detect_title is true)
     Codec       codec_used;
 };
 
@@ -244,6 +245,10 @@ struct ArchiveOptions
 
     // Parent CHD for delta compression
     std::string parent_chd_path;
+
+    // Title detection and rename
+    bool        detect_title = false;       // extract game title from disc filesystem
+    bool        rename_to_title = false;    // rename output file to detected title (implies detect_title)
 
     // Progress callback
     std::function<bool(uint64_t, uint64_t)> progress_callback;

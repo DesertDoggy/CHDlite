@@ -2,6 +2,7 @@
   "name": "chdlite",
   "version": "0.1.0",
   "description": "Cross-platform CHD file library and tools",
+  "builtin-baseline": "a42405db3111182e9339841ad0d4341722908ccd",
   "dependencies": [
     "zlib",
     "zstd",

@@ -54,3 +54,4 @@ vcpkg_installed/
 References/
 /releases
 /releases_archive
+/test_output

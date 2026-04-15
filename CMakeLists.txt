@@ -118,6 +118,7 @@ add_library(chdlite STATIC
     src/chd-api/chd_processor.cpp
     src/chd-api/chd_extractor.cpp
     src/chd-api/chd_archiver.cpp
+    src/chd-api/detect_system.cpp
 )
 
 target_include_directories(chdlite

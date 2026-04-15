@@ -123,6 +123,7 @@ struct ChdReader::Impl
             dst.pregap = src.pregap;
             dst.postgap = src.postgap;
             dst.session = src.session;
+            dst.start_lba = src.logframeofs;
             dst.is_audio = (src.trktype == cdrom_file::CD_TRACK_AUDIO);
         }
     }

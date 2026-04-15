@@ -6,6 +6,7 @@
 #define CHDLITE_CHD_READER_HPP
 
 #include "chd_types.hpp"
+#include "detect_system.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -41,6 +42,9 @@ public:
     // CD track access (only valid for CD/GD content)
     std::vector<TrackInfo> get_tracks() const;
     bool read_sector(uint32_t lba, void* buffer, TrackType type) const;
+
+    // Platform/system detection (CD/GD/DVD content)
+    CdSystem detect_system() const { return chdlite::detect_system(*this); }
 
     // Hash operations - compute from actual extracted content data
     // For CD/GD-ROM: hashes each track separately (matching chdman extractcd output)

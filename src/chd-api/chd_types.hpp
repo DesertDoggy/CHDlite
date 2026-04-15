@@ -165,6 +165,7 @@ struct TrackInfo
     uint32_t    pregap;          // pregap frames
     uint32_t    postgap;         // postgap frames
     uint32_t    session;         // session number
+    uint32_t    start_lba;       // logical frame offset (LBA where track data begins)
     bool        is_audio;
 };
 

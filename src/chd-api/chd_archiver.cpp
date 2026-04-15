@@ -519,6 +519,56 @@ ArchiveResult ChdArchiver::archive_dvd(const std::string& input_path,
 }
 
 
+// ======================> .bin/.iso format detection
+
+// CD-ROM sync pattern: 12 bytes at the start of every raw (2352-byte) sector
+static const uint8_t s_cd_sync[12] = {
+    0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00
+};
+
+// Detect whether a .bin/.iso/.img file is a CD-ROM image or DVD.
+// Returns "cd" or "dvd".
+static std::string detect_bin_format(const std::string& path)
+{
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f.is_open())
+        return "cd";  // fallback; archive_cd will report the real error
+
+    uint64_t size = static_cast<uint64_t>(f.tellg());
+    f.seekg(0);
+
+    // Check for raw CD sector sync pattern at offset 0
+    uint8_t header[16] = {};
+    f.read(reinterpret_cast<char*>(header), sizeof(header));
+
+    bool has_sync = (f.gcount() >= 12 && std::memcmp(header, s_cd_sync, 12) == 0);
+
+    if (has_sync) {
+        // Raw 2352-byte sectors → always CD-ROM
+        // Verify sync repeats at offset 2352
+        if (size >= 2 * 2352) {
+            f.seekg(2352);
+            uint8_t sync2[12] = {};
+            f.read(reinterpret_cast<char*>(sync2), 12);
+            if (f.gcount() >= 12 && std::memcmp(sync2, s_cd_sync, 12) == 0)
+                return "cd";
+        }
+        return "cd";  // single-sector or short image with sync → still CD
+    }
+
+    // No sync pattern → cooked 2048-byte sectors; distinguish CD vs DVD by size
+    // CD-ROM capacity: 700MB (standard) up to ~900MB (overburn)
+    // DVD single layer: 4.7GB
+    // Use 1GB as the threshold (generous for overburned CDs)
+    if (size > 1073741824ULL)
+        return "dvd";
+
+    // Small 2048-byte image → could be CD or small DVD; prefer CD since
+    // MAME's parse_iso handles it correctly as a single Mode 1 track
+    return "cd";
+}
+
+
 // ======================> archive (auto-detect)
 
 ArchiveResult ChdArchiver::archive(const std::string& input_path,
@@ -532,13 +582,10 @@ ArchiveResult ChdArchiver::archive(const std::string& input_path,
         std::string ext = path_ext_lower(input_path);
         if (ext == ".cue" || ext == ".gdi" || ext == ".toc" || ext == ".nrg")
             fmt = "cd";
-        else if (ext == ".iso")
+        else if (ext == ".iso" || ext == ".bin" || ext == ".img")
         {
-            // ISO could be DVD or CD; check file size heuristic
-            // CD-ROM max ~700MB, DVD starts ~4.7GB; use 1GB as threshold
-            std::ifstream f(input_path, std::ios::binary | std::ios::ate);
-            uint64_t size = f.is_open() ? static_cast<uint64_t>(f.tellg()) : 0;
-            fmt = (size > 1073741824ULL) ? "dvd" : "cd";
+            // Could be DVD or CD; detect from file content and size
+            fmt = detect_bin_format(input_path);
         }
         else
             fmt = "raw";

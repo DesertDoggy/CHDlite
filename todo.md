@@ -42,3 +42,6 @@
     - Survey user preferences (speed vs compression)
     - Consider default: zstd for speed? LZMA for size?
     - Allow user override via flag `--codec`
+
+# When using chdman commands need -i -o
+-> make auto if not specified. (except -i ofcourse)

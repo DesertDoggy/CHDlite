@@ -1,6 +1,9 @@
-# CHDlite
+### Alpha testing
+Basic functions are working but not enough testing yet.
 
-Basically a CHDman wrapper with added functions and drag&drop support. Read, hash, extract, and create CHD files for CD, DVD, GD-ROM, and raw disc formats.
+# CHDlite
+Basically a CHDman wrapper with added functions and drag&drop support. Priority on disc rom consoles.
+ Read, hash, extract, and create CHD files for CD, DVD, GD-ROM, and raw disc formats.
 
 Built on MAME's CHD/chdman implementation with a C++
 
@@ -24,7 +27,7 @@ Built on MAME's CHD/chdman implementation with a C++
 
 ## Downloads
 
-Pre-built binaries for macOS, Linux, and Windows are available on the [Releases](https://github.com/DesertDoggy/CHDlite/releases) page.
+Pre-built binaries for macOS, (Linux WIP) and Windows are available on the [Releases](https://github.com/DesertDoggy/CHDlite/releases) page.
 
 Each release contains three binaries:
 

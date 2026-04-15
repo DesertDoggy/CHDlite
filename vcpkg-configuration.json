@@ -1,10 +1,8 @@
 {
-  "default": {
-    "registries": [
-      {
-        "kind": "builtin",
-        "baseline": "2024-05-20"
-      }
-    ]
-  }
+  "registries": [
+    {
+      "kind": "builtin",
+      "baseline": "master"
+    }
+  ]
 }

@@ -52,3 +52,5 @@ vcpkg_installed/
 
 # References (large external repos, pull separately)
 References/
+/releases
+/releases_archive

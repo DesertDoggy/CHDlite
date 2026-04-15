@@ -223,6 +223,13 @@ else()
             "chdlite" "$<TARGET_FILE_DIR:chdlite_cli>/chdhash"
         COMMENT "Creating chdread and chdhash symlinks"
     )
+    # Self-sign on macOS to avoid Gatekeeper warnings
+    if(APPLE)
+        add_custom_command(TARGET chdlite_cli POST_BUILD
+            COMMAND codesign -s - --force --deep "$<TARGET_FILE:chdlite_cli>"
+            COMMENT "Self-signing chdlite binary"
+        )
+    endif()
 endif()
 
 endif()

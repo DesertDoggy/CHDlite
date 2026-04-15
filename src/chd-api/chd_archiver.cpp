@@ -47,7 +47,7 @@ static chd_codec_type chdlite_codec_to_mame(Codec c)
     }
 }
 
-// Default compression codec sets (mirrors chdman.cpp defaults)
+// Default compression codec sets (chdman legacy defaults — used when no smart defaults apply)
 static const chd_codec_type s_default_raw_compression[4] =
     { CHD_CODEC_LZMA, CHD_CODEC_ZLIB, CHD_CODEC_HUFFMAN, CHD_CODEC_FLAC };
 
@@ -56,6 +56,48 @@ static const chd_codec_type s_default_cd_compression[4] =
 
 static const chd_codec_type s_default_dvd_compression[4] =
     { CHD_CODEC_LZMA, CHD_CODEC_ZLIB, CHD_CODEC_HUFFMAN, CHD_CODEC_FLAC };
+
+// Smart system-aware compression defaults
+// PS2 DVD: zlib (best compat/speed balance for PS2 content)
+static const chd_codec_type s_ps2_dvd_compression[4] =
+    { CHD_CODEC_ZLIB, CHD_CODEC_NONE, CHD_CODEC_NONE, CHD_CODEC_NONE };
+
+// PS2 CD: cdzl (CD ZLIB)
+static const chd_codec_type s_ps2_cd_compression[4] =
+    { CHD_CODEC_CD_ZLIB, CHD_CODEC_NONE, CHD_CODEC_NONE, CHD_CODEC_NONE };
+
+// Other DVD: zstd
+static const chd_codec_type s_smart_dvd_compression[4] =
+    { CHD_CODEC_ZSTD, CHD_CODEC_NONE, CHD_CODEC_NONE, CHD_CODEC_NONE };
+
+// Other CD / GD-ROM: cdzs (CD ZSTD)
+static const chd_codec_type s_smart_cd_compression[4] =
+    { CHD_CODEC_CD_ZSTD, CHD_CODEC_NONE, CHD_CODEC_NONE, CHD_CODEC_NONE };
+
+// Pick the best default compression array based on detected system and content format.
+// Returns null if no smart default applies (caller falls back to chdman legacy defaults).
+static const chd_codec_type* smart_compression_for(CdSystem system, const std::string& format)
+{
+    if (system == CdSystem::PS2) {
+        if (format == "dvd")
+            return s_ps2_dvd_compression;
+        else
+            return s_ps2_cd_compression;
+    }
+    if (format == "dvd")
+        return s_smart_dvd_compression;
+    if (format == "cd" || format == "gd")
+        return s_smart_cd_compression;
+    return nullptr;  // raw / unknown — use chdman defaults
+}
+
+// Pick the default hunk size based on system and format (0 = let each archive_* decide)
+static uint32_t smart_hunk_for(CdSystem system, const std::string& format)
+{
+    if (format == "dvd")
+        return 2048;  // 1 DVD sector per hunk
+    return 0;  // CD/GD/raw use their own defaults
+}
 
 
 // ======================> Raw file compressor (reads from a binary file)
@@ -227,12 +269,24 @@ struct ChdArchiver::Impl
         result.compression_ratio = ratio;
     }
 
-    // Resolve compression codecs from options or defaults
+    // Resolve compression codecs from options or defaults.
+    // Priority: options.compression[] > options.codec > defaults parameter.
     static void resolve_compression(const ArchiveOptions& options,
                                     const chd_codec_type* defaults,
                                     chd_codec_type (&compression)[4])
     {
-        if (options.codec != Codec::None)
+        // Check if user specified the full 4-slot array
+        bool has_array = false;
+        for (int i = 0; i < 4; i++) {
+            if (options.compression[i] != Codec::None) { has_array = true; break; }
+        }
+
+        if (has_array)
+        {
+            for (int i = 0; i < 4; i++)
+                compression[i] = chdlite_codec_to_mame(options.compression[i]);
+        }
+        else if (options.codec != Codec::None)
         {
             // User specified a single codec — fill slot 0, rest NONE
             compression[0] = chdlite_codec_to_mame(options.codec);
@@ -565,14 +619,54 @@ ArchiveResult ChdArchiver::archive(const std::string& input_path,
             fmt = "raw";
     }
 
+    // GD-ROM detection (Dreamcast GDI files)
+    std::string smart_fmt = fmt;
+    if (path_ext_lower(input_path) == ".gdi")
+        smart_fmt = "gd";
+    else
+        smart_fmt = fmt;
+
+    // Apply smart defaults when user hasn't specified codecs
+    ArchiveOptions effective = options;
+    if (!options.has_custom_compression()) {
+        const chd_codec_type* smart = smart_compression_for(detection.system, smart_fmt);
+        if (smart) {
+            // Convert mame codec types back to our Codec enum for the effective options
+            // Actually, we'll inject them directly in the archive_* calls via a different path.
+            // Simpler: store the smart defaults in the compression[] array.
+            for (int i = 0; i < 4; i++) {
+                // Map back from chd_codec_type to Codec
+                switch (smart[i]) {
+                case CHD_CODEC_ZLIB:     effective.compression[i] = Codec::Zlib;     break;
+                case CHD_CODEC_ZSTD:     effective.compression[i] = Codec::Zstd;     break;
+                case CHD_CODEC_LZMA:     effective.compression[i] = Codec::LZMA;     break;
+                case CHD_CODEC_HUFFMAN:  effective.compression[i] = Codec::Huffman;  break;
+                case CHD_CODEC_FLAC:     effective.compression[i] = Codec::FLAC;     break;
+                case CHD_CODEC_CD_ZLIB:  effective.compression[i] = Codec::CD_Zlib;  break;
+                case CHD_CODEC_CD_ZSTD:  effective.compression[i] = Codec::CD_Zstd;  break;
+                case CHD_CODEC_CD_LZMA:  effective.compression[i] = Codec::CD_LZMA;  break;
+                case CHD_CODEC_CD_FLAC:  effective.compression[i] = Codec::CD_FLAC;  break;
+                default:                 effective.compression[i] = Codec::None;     break;
+                }
+            }
+        }
+    }
+
+    // Apply smart hunk size when user hasn't specified one
+    if (effective.hunk_bytes == 0) {
+        uint32_t smart_hunk = smart_hunk_for(detection.system, fmt);
+        if (smart_hunk > 0)
+            effective.hunk_bytes = smart_hunk;
+    }
+
     ArchiveResult result;
 
     if (fmt == "cd" || fmt == "cue" || fmt == "gdi" || fmt == "toc" || fmt == "nrg" || fmt == "iso")
-        result = archive_cd(input_path, output_path, options);
+        result = archive_cd(input_path, output_path, effective);
     else if (fmt == "dvd")
-        result = archive_dvd(input_path, output_path, options);
+        result = archive_dvd(input_path, output_path, effective);
     else
-        result = archive_raw(input_path, output_path, options);
+        result = archive_raw(input_path, output_path, effective);
 
     // Populate detection results
     result.detected_system = detection.system;

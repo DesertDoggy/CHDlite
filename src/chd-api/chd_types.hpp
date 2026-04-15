@@ -236,8 +236,13 @@ struct ExtractOptions
 
 struct ArchiveOptions
 {
+    // Compression: up to 4 codecs tried per hunk (best ratio wins).
+    // codec is a convenience shorthand — sets compression[0] and fills rest with None.
+    // If both are left at defaults, archive() picks smart system-aware codecs.
     Codec       codec = Codec::None;        // None = auto-detect
-    uint32_t    hunk_bytes = 0;             // 0 = auto (CD: 2448*8, HD: 4096 etc.)
+    Codec       compression[4] = { Codec::None, Codec::None, Codec::None, Codec::None };
+
+    uint32_t    hunk_bytes = 0;             // 0 = auto (CD: 2448*8, DVD: 2048, HD: 4096 etc.)
     uint32_t    unit_bytes = 0;             // 0 = auto
     int         num_processors = 0;         // 0 = auto (all cores)
 
@@ -254,6 +259,14 @@ struct ArchiveOptions
 
     // Progress callback
     std::function<bool(uint64_t, uint64_t)> progress_callback;
+
+    // Helper: true if user specified no codecs at all (use smart defaults)
+    bool has_custom_compression() const {
+        if (codec != Codec::None) return true;
+        for (auto c : compression)
+            if (c != Codec::None) return true;
+        return false;
+    }
 };
 
 // ======================> Exception

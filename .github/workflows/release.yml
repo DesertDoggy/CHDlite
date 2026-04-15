@@ -33,6 +33,11 @@ jobs:
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v10
 
+      - name: Install vcpkg dependencies
+        shell: bash
+        run: |
+          ./vcpkg/vcpkg install --triplet=${{ matrix.triplet }}
+
       - name: Configure with CMake
         shell: bash
         run: |

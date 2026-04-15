@@ -35,6 +35,7 @@ jobs:
         with:
           vcpkgDirectory: '${{ github.workspace }}/vcpkg'
           appendedCacheKey: ${{ hashFiles( '**/vcpkg.json' ) }}
+          vcpkgGitCommitId: '64fd52e82b1da37e0fb45843c6b66e21e7f8f7d4'
 
       - name: Configure with CMake
         shell: bash

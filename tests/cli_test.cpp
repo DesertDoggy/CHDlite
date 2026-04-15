@@ -80,7 +80,10 @@ static int run(const std::string& args, std::string* output = nullptr)
 {
     auto get_exit = [](int status) -> int {
         int s = status;
-        return WEXITSTATUS(s);
+#ifdef _WIN32
+        return s;  // Windows returns exit code directly
+#else
+        return WEXITSTATUS(s);  // Unix encodes status
 #endif
     };
 

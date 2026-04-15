@@ -48,6 +48,9 @@ int osd_getpid() noexcept
 //  osd_uchar_from_osdchar
 //============================================================
 
+// On Windows, this is provided by strconv.cpp for full Unicode support
+// On other platforms, use this simple implementation
+#if !defined(_WIN32)
 int osd_uchar_from_osdchar(char32_t *uchar, const char *osdchar, size_t count)
 {
 	// simple pass-through for ASCII/UTF-8 single bytes
@@ -57,6 +60,7 @@ int osd_uchar_from_osdchar(char32_t *uchar, const char *osdchar, size_t count)
 		*uchar = 0;
 	return 1;
 }
+#endif
 
 
 //============================================================

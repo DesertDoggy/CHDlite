@@ -271,7 +271,8 @@ int osd_uchar_from_osdchar(char32_t *uchar, const char *osdchar, size_t count)
 		goto error;
 
 	// The multibyte char can't be bigger than the max character size
-	count = std::min(count, size_t(IsDBCSLeadByte(*osdchar) ? cp.MaxCharSize : 1));
+	size_t max_size = IsDBCSLeadByte(*osdchar) ? cp.MaxCharSize : 1;
+	count = count < max_size ? count : max_size;
 
 	WCHAR wch;
 	if (MultiByteToWideChar(CP_ACP, 0, osdchar, static_cast<DWORD>(count), &wch, 1) == 0)

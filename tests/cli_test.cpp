@@ -81,6 +81,7 @@ static int run(const std::string& args, std::string* output = nullptr)
     auto get_exit = [](int status) -> int {
         int s = status;
         return WEXITSTATUS(s);
+#endif
     };
 
     // Build the actual command

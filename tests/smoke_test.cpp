@@ -4,6 +4,7 @@
 #include "chd_api.hpp"
 
 #include <chrono>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -16,7 +17,14 @@ namespace fs = std::filesystem;
 
 static FILE* g_log = nullptr;
 
-static void log_print(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+// GCC/Clang printf format checking attribute (not supported by MSVC)
+#ifdef __GNUC__
+#define PRINTF_ATTR(fmt_idx, arg_idx) __attribute__((format(printf, fmt_idx, arg_idx)))
+#else
+#define PRINTF_ATTR(fmt_idx, arg_idx)
+#endif
+
+static void log_print(const char* fmt, ...) PRINTF_ATTR(1, 2);
 static void log_print(const char* fmt, ...)
 {
     va_list args;

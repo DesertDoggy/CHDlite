@@ -6,6 +6,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+# Output directories for v0.1.0 release
+if(WIN32)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/Releases/v0.1.0/win/bin")
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/Releases/v0.1.0/win/lib")
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/Releases/v0.1.0/win/lib")
+endif()
+
 # Compiler options
 if(MSVC)
     add_compile_options(/W3)
@@ -68,8 +75,15 @@ set(MAME_OSD_SOURCES
     src/mame/osd/osdcore_impl.cpp
     src/mame/osd/osdfile_impl.cpp
     src/mame/osd/osdsync.cpp
-    src/mame/osd/strconv.cpp
 )
+
+# strconv.cpp is Windows-specific and conflicts with osdcore_impl.cpp on Windows
+# Only include it on non-Windows platforms
+if(NOT WIN32)
+    list(APPEND MAME_OSD_SOURCES
+        src/mame/osd/strconv.cpp
+    )
+endif()
 
 add_library(mame_chd_core STATIC
     ${MAME_UTIL_SOURCES}
@@ -89,10 +103,17 @@ if(NOT MSVC)
     target_compile_options(mame_chd_core PRIVATE -Wno-sign-compare -Wno-unused-variable -Wno-missing-field-initializers)
 endif()
 
+# Handle zstd target name differences across platforms
+if(TARGET zstd::libzstd_static)
+    set(ZSTD_TARGET zstd::libzstd_static)
+else()
+    set(ZSTD_TARGET zstd::libzstd)
+endif()
+
 target_link_libraries(mame_chd_core
     PUBLIC
         ZLIB::ZLIB
-        zstd::libzstd_static
+        ${ZSTD_TARGET}
         FLAC::FLAC
         FLAC::FLAC++
         lzma_sdk
@@ -104,7 +125,7 @@ target_link_libraries(mame_chd_core PUBLIC utf8proc::utf8proc)
 # Platform defines
 target_compile_definitions(mame_chd_core PRIVATE CRLF=2)  # LF line endings
 if(WIN32)
-    target_compile_definitions(mame_chd_core PRIVATE OSD_WINDOWS CRLF=3)
+    target_compile_definitions(mame_chd_core PRIVATE OSD_WINDOWS CRLF=3 NOMINMAX)  # NOMINMAX prevents min/max macros
 elseif(APPLE)
     target_compile_definitions(mame_chd_core PRIVATE SDLMAME_MACOSX)
 else()

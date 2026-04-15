@@ -93,7 +93,7 @@ int osd_get_num_processors(bool heavy_mt)
 #else
 	unsigned int threads = std::thread::hardware_concurrency();
 	// max out at 4 for now since scaling above that seems to do poorly
-	return heavy_mt ? threads : std::min(std::thread::hardware_concurrency(), 4U);
+	return heavy_mt ? threads : (threads > 4U ? 4U : threads);
 #endif
 }
 
@@ -281,13 +281,13 @@ osd_work_queue *osd_work_queue_alloc(int flags)
 #endif
 
 	// clamp to the maximum
-	queue->threads = std::min(threadnum, WORK_MAX_THREADS);
+	queue->threads = (threadnum < WORK_MAX_THREADS ? threadnum : WORK_MAX_THREADS);
 
 	// allocate memory for thread array (+1 to count the calling thread if WORK_QUEUE_FLAG_MULTI)
 	if (flags & WORK_QUEUE_FLAG_MULTI)
 		allocthreadnum = queue->threads + 1;
 	else
-		allocthreadnum = std::max(queue->threads, 1u);
+		allocthreadnum = (queue->threads > 1u ? queue->threads : 1u);
 
 #if KEEP_STATISTICS
 	printf("osdprocs: %d effecprocs: %d threads: %d allocthreads: %d osdthreads: %d maxthreads: %d queuethreads: %d\n", osd_num_processors, numprocs, threadnum, allocthreadnum, osdthreadnum, WORK_MAX_THREADS, queue->threads);
@@ -645,7 +645,7 @@ static int effective_num_processors(bool heavy_mt)
 	// osd_num_processors == 0 for 'auto'
 	if (osd_num_processors > 0)
 	{
-		return std::min(4 * physprocs, osd_num_processors);
+		return (4 * physprocs < osd_num_processors ? 4 * physprocs : osd_num_processors);
 	}
 	else
 	{
@@ -655,7 +655,7 @@ static int effective_num_processors(bool heavy_mt)
 		// note that we permit more than the real number of processors for testing
 		const char *procsoverride = osd_getenv(ENV_PROCESSORS);
 		if (procsoverride != nullptr && sscanf(procsoverride, "%d", &numprocs) == 1 && numprocs > 0)
-			return std::min(4 * physprocs, numprocs);
+			return (4 * physprocs < numprocs ? 4 * physprocs : numprocs);
 
 		// otherwise, return the info from the system
 		return physprocs;

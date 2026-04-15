@@ -30,12 +30,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v10
-        with:
-          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
-          appendedCacheKey: ${{ hashFiles( '**/vcpkg.json' ) }}
-          vcpkgGitCommitId: '64fd52e82b1da37e0fb45843c6b66e21e7f8f7d4'
+      - name: Clone vcpkg
+        shell: bash
+        run: |
+          git clone https://github.com/Microsoft/vcpkg.git vcpkg
+
+      - name: Bootstrap vcpkg (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cd vcpkg && ./bootstrap-vcpkg.sh
+
+      - name: Bootstrap vcpkg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cd vcpkg
+          .\bootstrap-vcpkg.bat
+
+      - name: Install packages with vcpkg
+        shell: bash
+        run: |
+          ./vcpkg/vcpkg install zlib zstd flac utf8proc xxhash --triplet=${{ matrix.triplet }}
 
       - name: Configure with CMake
         shell: bash

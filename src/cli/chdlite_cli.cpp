@@ -37,16 +37,22 @@
 namespace fs = std::filesystem;
 using namespace chdlite;
 
-// ======================> Beta error log (always on until release)
-// Appends to chdlite_errors.log next to the binary or cwd.
-// Records: timestamp, version, full command line, error message.
-// Users share this file for bug reports.
+// ======================> Activity log
+// Appends to chdlite.log next to the binary or cwd.
+// Records: timestamp, version, full command line, status (OK or error).
+// Default level per release phase:  alpha=info  beta=error  release=none
+// Override with -log info|error|none
 
-static std::string g_cmdline;       // full command line for logging
-static std::string g_input_file;    // resolved after parse
-static std::string g_log_path;      // path to error log file
+enum class LogLevel { Info = 0, Error = 1, None = 2 };
 
-static void init_error_log(int argc, char** argv)
+static constexpr LogLevel LOG_DEFAULT = LogLevel::Info;  // ← change per phase
+
+static LogLevel     g_log_level = LOG_DEFAULT;
+static std::string  g_cmdline;
+static std::string  g_input_file;
+static std::string  g_log_path;
+
+static void init_log(int argc, char** argv)
 {
     // Build full command line string
     for (int i = 0; i < argc; i++)
@@ -64,20 +70,22 @@ static void init_error_log(int argc, char** argv)
     std::error_code ec;
     fs::path exe_dir = fs::canonical(fs::path(argv[0]).parent_path(), ec);
     if (ec || exe_dir.empty())
-        g_log_path = "chdlite_errors.log";
+        g_log_path = "chdlite.log";
     else
-        g_log_path = (exe_dir / "chdlite_errors.log").string();
+        g_log_path = (exe_dir / "chdlite.log").string();
 }
 
-static void log_error(const std::string& error_msg)
+static void log_entry(LogLevel level, const std::string& status)
 {
-    // Timestamp
+    if (g_log_level == LogLevel::None) return;
+    if (level < g_log_level) return;
+
     std::time_t now = std::time(nullptr);
     char timebuf[64];
     std::strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
 
     std::ofstream log(g_log_path, std::ios::app);
-    if (!log.is_open()) return;   // can't write log, silently skip
+    if (!log.is_open()) return;
 
     log << "---\n";
     log << "Time:    " << timebuf << "\n";
@@ -85,12 +93,12 @@ static void log_error(const std::string& error_msg)
     log << "Command: " << g_cmdline << "\n";
     if (!g_input_file.empty())
         log << "Input:   " << g_input_file << "\n";
-    log << "Error:   " << error_msg << "\n";
+    log << "Status:  " << status << "\n";
     log << std::endl;
-
-    // Tell the user
-    std::fprintf(stderr, "(error logged to %s)\n", g_log_path.c_str());
 }
+
+static void log_info(const std::string& msg)   { log_entry(LogLevel::Info, msg); }
+static void log_error(const std::string& msg)  { log_entry(LogLevel::Error, "ERROR: " + msg); }
 
 // ======================> Terminal output helpers (chdman style)
 
@@ -223,6 +231,7 @@ struct Args
     uint64_t    input_frames = 0;
     HashFlags   hash = HashFlags(0);    // 0 = none
     bool        hash_default = false;   // -hash with no args → SHA1
+    std::string log_level;              // -log info|error|none
 };
 
 static void print_usage()
@@ -268,6 +277,7 @@ static void print_usage()
         "  -ih, --inputhunks <n>       Number of hunks to extract\n"
         "  -hash <algorithms>          Compute hashes (sha1,md5,crc32,sha256,xxh3)\n"
         "                              Default: sha1. Comma-separated for multiple.\n"
+        "  -log <level>                Log level: info, error, none (default: info)\n"
         "  -v, --verbose               Verbose output\n"
         "\n",
         VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH
@@ -352,6 +362,7 @@ static Args parse_args(int argc, char** argv)
         else if (arg == "-ih" || arg == "--inputhunks")       a.input_hunks = std::stoull(next());
         else if (arg == "-isf" || arg == "--inputstartframe") a.input_start_frame = std::stoull(next());
         else if (arg == "-if" || arg == "--inputframes")      a.input_frames = std::stoull(next());
+        else if (arg == "-log" || arg == "--log")      a.log_level = next();
         else if (arg == "-hash" || arg == "--hash")
         {
             // -hash with optional value: if next arg looks like a flag, use default SHA1
@@ -438,6 +449,7 @@ static int cmd_read(const Args& args)
             std::printf("Game ID:      %s\n", det.game_id.c_str());
     }
 
+    log_info("read OK");
     return 0;
 }
 
@@ -517,6 +529,7 @@ static int cmd_hash(const Args& args)
             std::printf("    CRC32:    %s\n", result.sheet_hash.crc32.hex_string.c_str());
     }
 
+    log_info("hash OK: " + std::to_string(result.tracks.size()) + " tracks");
     return 0;
 }
 
@@ -584,6 +597,7 @@ static int cmd_extract(const Args& args)
     std::printf("Bytes:        %s\n", big_int_string(result.bytes_written).c_str());
     std::printf("Extraction complete\n");
 
+    log_info("extract OK: " + std::to_string(result.bytes_written) + " bytes");
     return 0;
 }
 
@@ -675,6 +689,7 @@ static int cmd_create(const Args& args)
         std::printf("Game ID:      %s\n", result.detected_gameid.c_str());
     std::printf("Compression complete\n");
 
+    log_info("create OK: " + std::to_string(result.output_bytes) + " bytes");
     return 0;
 }
 
@@ -720,6 +735,8 @@ static int cmd_create_typed(const Args& args, const char* type_hint)
         std::printf("Parent CHD:   %s\n", args.input_parent.c_str());
     if (opts.has_custom_compression())
         std::printf("Compression:  %s\n", codec_list_string(opts.compression).c_str());
+    if (opts.hunk_bytes)
+        std::printf("Hunk size:    %s bytes\n", big_int_string(opts.hunk_bytes).c_str());
 
     ChdArchiver archiver;
     ArchiveResult result;
@@ -741,6 +758,7 @@ static int cmd_create_typed(const Args& args, const char* type_hint)
     std::printf("Ratio:        %.1f%%\n", result.compression_ratio * 100.0);
     std::printf("Compression complete\n");
 
+    log_info(std::string(type_hint) + " OK: " + std::to_string(result.output_bytes) + " bytes");
     return 0;
 }
 
@@ -802,6 +820,7 @@ static int cmd_extract_typed(const Args& args, const char* type_hint)
     std::printf("Bytes:        %s\n", big_int_string(result.bytes_written).c_str());
     std::printf("Extraction complete\n");
 
+    log_info(std::string("extract") + type_hint + " OK: " + std::to_string(result.bytes_written) + " bytes");
     return 0;
 }
 
@@ -834,10 +853,21 @@ int main(int argc, char** argv)
         return 0;
     }
 
-    init_error_log(argc, argv);
+    init_log(argc, argv);
 
     auto args = parse_args(argc, argv);
     g_input_file = args.input;
+
+    // Set log level from -log option
+    if (!args.log_level.empty())
+    {
+        std::string ll = args.log_level;
+        for (auto& c : ll) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (ll == "info")        g_log_level = LogLevel::Info;
+        else if (ll == "error")  g_log_level = LogLevel::Error;
+        else if (ll == "none" || ll == "off") g_log_level = LogLevel::None;
+    }
+
     std::string cmd = args.command;
 
     // Lowercase the command

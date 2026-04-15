@@ -199,6 +199,8 @@ static TestResult test_one_chd(const std::string& chd_path, const std::string& o
         log_print("  System (all):    %s\n", chdlite::system_name(det_all.system));
         if (!det_all.title.empty())
             log_print("  Title:           %s\n", det_all.title.c_str());
+        if (!det_all.game_id.empty())
+            log_print("  Game ID:         %s\n", det_all.game_id.c_str());
 
         // Backup-only: skip sector 0 magic, run ISO 9660 + heuristic only
         auto backup_flags = chdlite::DetectFlags::Iso9660 | chdlite::DetectFlags::Heuristic;

@@ -33,11 +33,12 @@ inline bool has_detect_flag(DetectFlags flags, DetectFlags f) { return (uint32_t
 // Returns true on success, false on error.
 using SectorReader = std::function<bool(uint32_t lba, uint8_t* buffer)>;
 
-// Result of detection — system, optional title, and format hint for raw input
+// Result of detection — system, optional title/game ID, and format hint for raw input
 struct DetectionResult
 {
     CdSystem    system = CdSystem::Unknown;
     std::string title;       // extracted game title (empty if not requested or unavailable)
+    std::string game_id;     // product/serial number (e.g. SCPS_100.50, T-9527G)
     std::string format;      // "cd", "dvd", or "raw" (used by detect_input)
 };
 

@@ -489,6 +489,106 @@ static std::string extract_title(const SectorReader& read_sector, CdSystem syste
     return {};
 }
 
+// Extract product/serial number (game ID) based on detected system
+static std::string extract_game_id(const SectorReader& read_sector, CdSystem system,
+                                   const Iso9660Pvd& pvd)
+{
+    switch (system) {
+    case CdSystem::PS1:
+    case CdSystem::PS2: {
+        // Same as title — game ID from SYSTEM.CNF (e.g. SCPS_100.50, SLPM_655.55)
+        std::string cnf = iso_read_file(read_sector, pvd, "SYSTEM.CNF");
+        if (!cnf.empty()) {
+            std::string boot_key = (system == CdSystem::PS2) ? "BOOT2" : "BOOT";
+            auto pos = cnf.find(boot_key);
+            if (pos != std::string::npos) {
+                auto bs = cnf.find('\\', pos);
+                if (bs == std::string::npos) bs = cnf.find(':', pos);
+                if (bs != std::string::npos) {
+                    auto start = bs + 1;
+                    auto semi = cnf.find(';', start);
+                    auto nl = cnf.find_first_of("\r\n", start);
+                    auto end = std::min(semi, nl);
+                    if (end != std::string::npos && end > start)
+                        return trim_right(cnf.substr(start, end - start));
+                }
+            }
+        }
+        break;
+    }
+    case CdSystem::PSP: {
+        // DISC_ID from PARAM.SFO (e.g. ULJM05325)
+        std::string sfo = iso_read_file(read_sector, pvd, "PSP_GAME/PARAM.SFO", 16384);
+        if (sfo.size() >= 20) {
+            const auto* data = reinterpret_cast<const uint8_t*>(sfo.data());
+            uint32_t sfo_size = static_cast<uint32_t>(sfo.size());
+            if (sfo_size >= 20 && data[0] == 0x00 && data[1] == 0x50 &&
+                data[2] == 0x53 && data[3] == 0x46) {
+                uint32_t key_table  = read_le32(&data[8]);
+                uint32_t data_table = read_le32(&data[12]);
+                uint32_t num_entries = read_le32(&data[16]);
+                for (uint32_t i = 0; i < num_entries && 20 + (i + 1) * 16 <= sfo_size; i++) {
+                    const uint8_t* idx = &data[20 + i * 16];
+                    uint16_t key_offset  = read_le16(&idx[0]);
+                    uint32_t data_offset = read_le32(&idx[12]);
+                    uint32_t key_pos = key_table + key_offset;
+                    uint32_t data_pos = data_table + data_offset;
+                    if (key_pos >= sfo_size || data_pos >= sfo_size) continue;
+                    std::string key(reinterpret_cast<const char*>(&data[key_pos]));
+                    if (key == "DISC_ID") {
+                        std::string val(reinterpret_cast<const char*>(&data[data_pos]));
+                        val = trim_right(val);
+                        if (!val.empty()) return val;
+                    }
+                }
+            }
+        }
+        break;
+    }
+    case CdSystem::Saturn: {
+        // Product number at sector 0 offset 0x20, 10 bytes
+        uint8_t sector0[2048];
+        if (read_sector(0, sector0)) {
+            std::string id(reinterpret_cast<const char*>(&sector0[0x20]), 10);
+            id = trim_right(id);
+            if (!id.empty()) return id;
+        }
+        break;
+    }
+    case CdSystem::Dreamcast: {
+        // Product number at IP.BIN offset 0x40, 10 bytes
+        uint8_t sector0[2048];
+        if (read_sector(0, sector0)) {
+            std::string id(reinterpret_cast<const char*>(&sector0[0x40]), 10);
+            id = trim_right(id);
+            if (!id.empty()) return id;
+        }
+        break;
+    }
+    case CdSystem::MegaCD: {
+        // Serial at sector 0 offset 0x183, 11 bytes (after "GM " at 0x180)
+        uint8_t sector0[2048];
+        if (read_sector(0, sector0)) {
+            std::string id(reinterpret_cast<const char*>(&sector0[0x183]), 11);
+            id = trim_right(id);
+            if (!id.empty()) return id;
+        }
+        break;
+    }
+    default:
+        break;
+    }
+    return {};
+}
+
+// Helper: fill both title and game_id in a DetectionResult
+static void fill_metadata(const SectorReader& read_sector, CdSystem system,
+                          const Iso9660Pvd& pvd, DetectionResult& result)
+{
+    result.title   = extract_title(read_sector, system, pvd);
+    result.game_id = extract_game_id(read_sector, system, pvd);
+}
+
 // ======================> Raw file helpers
 
 // CD-ROM sync pattern
@@ -601,7 +701,7 @@ DetectionResult detect_system(const SectorReader& read_sector,
         }
         if (detect_title) {
             Iso9660Pvd pvd;  // GD-ROM title from header, not ISO
-            result.title = extract_title(read_sector, result.system, pvd);
+            fill_metadata(read_sector, result.system, pvd, result);
         }
         return result;
     }
@@ -615,17 +715,17 @@ DetectionResult detect_system(const SectorReader& read_sector,
                 CdSystem sys;
 
                 sys = check_psp(read_sector, pvd);
-                if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) result.title = extract_title(read_sector, sys, pvd); return result; }
+                if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
 
                 sys = check_ps1_ps2(read_sector, pvd);
-                if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) result.title = extract_title(read_sector, sys, pvd); return result; }
+                if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
 
                 sys = check_dvd_video(read_sector, pvd);
-                if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) result.title = extract_title(read_sector, sys, pvd); return result; }
+                if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
 
                 // No system match but valid ISO — use volume ID as title
                 if (detect_title)
-                    result.title = extract_title(read_sector, CdSystem::DVDISO, pvd);
+                    fill_metadata(read_sector, CdSystem::DVDISO, pvd, result);
             }
         }
         result.system = CdSystem::DVDISO;
@@ -657,28 +757,28 @@ DetectionResult detect_system(const SectorReader& read_sector,
                     sys = check_3do(sector0);
                     if (sys != CdSystem::Unknown) {
                         result.system = sys;
-                        if (detect_title) { Iso9660Pvd pvd; result.title = extract_title(read_sector, sys, pvd); }
+                        if (detect_title) { Iso9660Pvd pvd; fill_metadata(read_sector, sys, pvd, result); }
                         return result;
                     }
 
                     sys = check_megacd(sector0);
                     if (sys != CdSystem::Unknown) {
                         result.system = sys;
-                        if (detect_title) { Iso9660Pvd pvd; result.title = extract_title(read_sector, sys, pvd); }
+                        if (detect_title) { Iso9660Pvd pvd; fill_metadata(read_sector, sys, pvd, result); }
                         return result;
                     }
 
                     sys = check_saturn(sector0);
                     if (sys != CdSystem::Unknown) {
                         result.system = sys;
-                        if (detect_title) { Iso9660Pvd pvd; result.title = extract_title(read_sector, sys, pvd); }
+                        if (detect_title) { Iso9660Pvd pvd; fill_metadata(read_sector, sys, pvd, result); }
                         return result;
                     }
 
                     sys = check_dreamcast(sector0);
                     if (sys != CdSystem::Unknown) {
                         result.system = sys;
-                        if (detect_title) { Iso9660Pvd pvd; result.title = extract_title(read_sector, sys, pvd); }
+                        if (detect_title) { Iso9660Pvd pvd; fill_metadata(read_sector, sys, pvd, result); }
                         return result;
                     }
                 }
@@ -694,16 +794,16 @@ DetectionResult detect_system(const SectorReader& read_sector,
                     CdSystem sys;
 
                     sys = check_ps1_ps2(read_sector, pvd);
-                    if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) result.title = extract_title(read_sector, sys, pvd); return result; }
+                    if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
 
                     sys = check_neogeocd(read_sector, pvd);
-                    if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) result.title = extract_title(read_sector, sys, pvd); return result; }
+                    if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
 
                     sys = check_psp(read_sector, pvd);
-                    if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) result.title = extract_title(read_sector, sys, pvd); return result; }
+                    if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
 
                     sys = check_dvd_video(read_sector, pvd);
-                    if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) result.title = extract_title(read_sector, sys, pvd); return result; }
+                    if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
                 }
             }
 
@@ -716,7 +816,7 @@ DetectionResult detect_system(const SectorReader& read_sector,
                         Iso9660Pvd pvd = read_pvd(read_sector);
                         if (!pvd.valid && data_lba > 0)
                             pvd = read_pvd(read_sector, data_lba);
-                        result.title = extract_title(read_sector, sys, pvd);
+                        fill_metadata(read_sector, sys, pvd, result);
                     }
                     return result;
                 }
@@ -728,7 +828,7 @@ DetectionResult detect_system(const SectorReader& read_sector,
             Iso9660Pvd pvd = read_pvd(read_sector);
             if (!pvd.valid && data_lba > 0)
                 pvd = read_pvd(read_sector, data_lba);
-            result.title = extract_title(read_sector, CdSystem::GenericCD, pvd);
+            fill_metadata(read_sector, CdSystem::GenericCD, pvd, result);
         }
         return result;
     }

@@ -550,7 +550,7 @@ ArchiveResult ChdArchiver::archive(const std::string& input_path,
                                    const ArchiveOptions& options)
 {
     // Run pre-archive detection
-    bool need_title = options.detect_title || options.rename_to_title;
+    bool need_title = options.detect_title || options.rename_to_title || options.rename_to_gameid;
     DetectionResult detection = detect_input(input_path, need_title);
 
     // Determine format from explicit option or detection result
@@ -577,22 +577,26 @@ ArchiveResult ChdArchiver::archive(const std::string& input_path,
     // Populate detection results
     result.detected_system = detection.system;
     result.detected_title = detection.title;
+    result.detected_gameid = detection.game_id;
 
-    // Rename output to title if requested and successful
-    if (result.success && options.rename_to_title && !detection.title.empty()) {
+    // Rename output to title or game ID if requested and successful
+    std::string rename_label;
+    if (result.success && options.rename_to_gameid && !detection.game_id.empty())
+        rename_label = sanitize_filename(detection.game_id);
+    else if (result.success && options.rename_to_title && !detection.title.empty())
+        rename_label = sanitize_filename(detection.title);
+
+    if (!rename_label.empty()) {
         namespace fs = std::filesystem;
-        std::string safe_title = sanitize_filename(detection.title);
-        if (!safe_title.empty()) {
-            fs::path out(result.output_path);
-            fs::path new_path = out.parent_path() / (safe_title + ".chd");
-            try {
-                if (!fs::exists(new_path)) {
-                    fs::rename(out, new_path);
-                    result.output_path = new_path.string();
-                }
-            } catch (...) {
-                // Rename failed — keep original path, not a fatal error
+        fs::path out(result.output_path);
+        fs::path new_path = out.parent_path() / (rename_label + ".chd");
+        try {
+            if (!fs::exists(new_path)) {
+                fs::rename(out, new_path);
+                result.output_path = new_path.string();
             }
+        } catch (...) {
+            // Rename failed — keep original path, not a fatal error
         }
     }
 

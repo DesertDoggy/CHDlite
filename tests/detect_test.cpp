@@ -109,6 +109,8 @@ int main(int argc, char* argv[])
 
         if (!det_all.title.empty())
             std::printf("             Title: %s\n", det_all.title.c_str());
+        if (!det_all.game_id.empty())
+            std::printf("           Game ID: %s\n", det_all.game_id.c_str());
 
         pass++;
         reader.close();

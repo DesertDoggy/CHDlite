@@ -18,6 +18,70 @@
 
 namespace chdlite {
 
+// ======================> CUE fix helpers
+
+// Fix CUE files where the FILE line references a bin with "(Track 1)" but the
+// actual file on disk doesn't have that suffix (or vice versa).
+static bool fix_cue_track1(const std::string& cue_path)
+{
+    namespace fs = std::filesystem;
+    std::ifstream in(cue_path);
+    if (!in.is_open()) return false;
+
+    std::vector<std::string> lines;
+    std::string line;
+    bool changed = false;
+
+    while (std::getline(in, line)) {
+        // Look for FILE "..." BINARY lines
+        auto fpos = line.find("FILE \"");
+        if (fpos != std::string::npos) {
+            auto qstart = line.find('"', fpos);
+            auto qend = line.find('"', qstart + 1);
+            if (qstart != std::string::npos && qend != std::string::npos) {
+                std::string ref_name = line.substr(qstart + 1, qend - qstart - 1);
+                fs::path cue_dir = fs::path(cue_path).parent_path();
+                fs::path ref_path = cue_dir / ref_name;
+
+                if (!fs::exists(ref_path)) {
+                    // Try adding/removing " (Track 1)" before extension
+                    fs::path stem = fs::path(ref_name).stem();
+                    fs::path ext  = fs::path(ref_name).extension();
+                    std::string s = stem.string();
+                    std::string alt;
+
+                    const std::string tag = " (Track 1)";
+                    if (s.size() > tag.size() && s.substr(s.size() - tag.size()) == tag) {
+                        // Has "(Track 1)" — try without
+                        alt = s.substr(0, s.size() - tag.size()) + ext.string();
+                    } else {
+                        // Doesn't have it — try with
+                        alt = s + tag + ext.string();
+                    }
+
+                    if (!alt.empty() && fs::exists(cue_dir / alt)) {
+                        line = line.substr(0, qstart + 1) + alt + line.substr(qend);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        lines.push_back(line);
+    }
+    in.close();
+
+    if (changed) {
+        std::ofstream out(cue_path, std::ios::trunc);
+        if (!out.is_open()) return false;
+        for (size_t i = 0; i < lines.size(); i++) {
+            out << lines[i];
+            if (i + 1 < lines.size()) out << '\n';
+        }
+        return true;
+    }
+    return false;
+}
+
 // ======================> Helpers
 
 static std::string path_ext_lower(const std::string& path)
@@ -603,6 +667,10 @@ ArchiveResult ChdArchiver::archive(const std::string& input_path,
                                    const std::string& output_path,
                                    const ArchiveOptions& options)
 {
+    // Apply CUE fixes before anything else
+    if (has_fix_cue(options.fix_cue, FixCue::Single) && path_ext_lower(input_path) == ".cue")
+        fix_cue_track1(input_path);
+
     // Run pre-archive detection
     bool need_title = options.detect_title || options.rename_to_title || options.rename_to_gameid;
     DetectionResult detection = detect_input(input_path, need_title);

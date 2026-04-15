@@ -234,6 +234,19 @@ struct ExtractOptions
     std::function<bool(uint64_t, uint64_t)> progress_callback;
 };
 
+// ======================> CUE fix modes (bitmask for future expansion)
+
+enum class FixCue : uint32_t
+{
+    None     = 0,
+    Single   = 1 << 0,   // Fix single-track CUE: if referenced .bin doesn't exist, find the actual .bin
+    // Future: Multi, Pregap, etc.
+};
+
+inline FixCue operator|(FixCue a, FixCue b) { return FixCue(uint32_t(a) | uint32_t(b)); }
+inline FixCue operator&(FixCue a, FixCue b) { return FixCue(uint32_t(a) & uint32_t(b)); }
+inline bool has_fix_cue(FixCue flags, FixCue f) { return (uint32_t(flags) & uint32_t(f)) != 0; }
+
 struct ArchiveOptions
 {
     // Compression: up to 4 codecs tried per hunk (best ratio wins).
@@ -251,6 +264,9 @@ struct ArchiveOptions
 
     // Parent CHD for delta compression
     std::string parent_chd_path;
+
+    // CUE file fixes
+    FixCue      fix_cue = FixCue::None;
 
     // Title/ID detection and rename
     bool        detect_title = false;       // extract game title from disc filesystem

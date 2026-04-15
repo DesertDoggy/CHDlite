@@ -139,3 +139,6 @@ target_link_libraries(smoke_test PRIVATE chdlite)
 
 add_executable(detect_test tests/detect_test.cpp)
 target_link_libraries(detect_test PRIVATE chdlite)
+
+add_executable(archive_test tests/archive_test.cpp)
+target_link_libraries(archive_test PRIVATE chdlite)

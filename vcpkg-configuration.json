@@ -1,8 +1,10 @@
 {
-  "registries": [
-    {
-      "kind": "builtin",
-      "baseline": "master"
-    }
-  ]
+  "default": {
+    "registries": [
+      {
+        "kind": "builtin",
+        "baseline": "3e7b79e62a319ca8dce02ee98b2c9bbfbb7e2cbc"
+      }
+    ]
+  }
 }

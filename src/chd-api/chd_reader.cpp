@@ -728,7 +728,7 @@ std::string ChdReader::format_hash(const ContentHashResult& result,
 
     switch (format)
     {
-    case HashOutputFormat::Log:
+    case HashOutputFormat::Hashes:
     {
         out << "; CHDlite Hash - " << stem << "\n";
         out << "; Content Type: " << content_type_string(result.content_type) << "\n";

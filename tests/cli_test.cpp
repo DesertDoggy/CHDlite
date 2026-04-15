@@ -12,6 +12,8 @@
 //  Block 6 (create DVD):  createdvd, -c, -hs, -np, -o, -f
 //  Block 7 (auto):        auto (CHD→extract), auto (CUE→create)
 //  Block 8 (drag-drop):   bare file argument (no command)
+//  Block 9 (errors):      invalid inputs, missing args
+//  Block 10 (log):        activity log verification
 
 #include <cstdio>
 #include <cstdlib>
@@ -27,6 +29,9 @@ namespace fs = std::filesystem;
 static int g_pass = 0;
 static int g_fail = 0;
 static int g_skip = 0;
+static int g_run_ok = 0;  // successful CLI invocations (for log verification)
+
+static const std::string LOG_PATH = "build/chdlite.log";
 
 #define CLR_PASS "\033[32m"
 #define CLR_FAIL "\033[31m"
@@ -95,9 +100,13 @@ static int run(const std::string& args, std::string* output = nullptr)
                 output->append(buf, n);
             std::fclose(f);
         }
-        return get_exit(rc);
+        int exit_code = get_exit(rc);
+        if (exit_code == 0) g_run_ok++;
+        return exit_code;
     }
-    return get_exit(std::system(cmd.c_str()));
+    int rc2 = get_exit(std::system(cmd.c_str()));
+    if (rc2 == 0) g_run_ok++;
+    return rc2;
 }
 
 static bool contains(const std::string& haystack, const std::string& needle)
@@ -613,6 +622,44 @@ static void block_errors()
     }
 }
 
+// ======================> Block 10: activity log verification
+
+static void block_log()
+{
+    std::printf(CLR_BOLD "\n=== Block 10: activity log ===" CLR_RST "\n");
+
+    // The log file should exist after all the successful CLI runs above
+    check(file_exists(LOG_PATH), "chdlite.log exists");
+
+    if (file_exists(LOG_PATH))
+    {
+        std::string log = read_text_file(LOG_PATH);
+
+        // Count entries (each starts with "---")
+        int entries = 0;
+        std::string::size_type pos = 0;
+        while ((pos = log.find("---\n", pos)) != std::string::npos) {
+            entries++;
+            pos += 4;
+        }
+
+        check_val(entries >= g_run_ok,
+                  "log entry count >= successful runs",
+                  "entries=" + std::to_string(entries) +
+                  " successful_runs=" + std::to_string(g_run_ok));
+
+        // Each entry should have the basic fields
+        check(contains(log, "Time:"), "log contains timestamps");
+        check(contains(log, "Version:"), "log contains version");
+        check(contains(log, "Command:"), "log contains command lines");
+        check(contains(log, "Status:"), "log contains status");
+
+        // Should have both OK and ERROR entries from block 9 error cases
+        check(contains(log, "OK"), "log has success entries");
+        check(contains(log, "ERROR"), "log has error entries");
+    }
+}
+
 // ======================> main
 
 int main(int argc, char** argv)
@@ -631,6 +678,9 @@ int main(int argc, char** argv)
     fs::remove_all(tp.out_root);
     fs::create_directories(tp.out_root);
 
+    // Delete activity log so we start fresh
+    fs::remove(LOG_PATH);
+
     // Run all blocks
     block_read(tp);
     block_hash(tp);
@@ -641,6 +691,7 @@ int main(int argc, char** argv)
     block_auto(tp);
     block_dragdrop(tp);
     block_errors();
+    block_log();
 
     // Summary
     std::printf(CLR_BOLD "\n=== Summary ===" CLR_RST "\n");

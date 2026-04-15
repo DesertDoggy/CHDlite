@@ -74,7 +74,7 @@ inline bool has_flag(HashFlags flags, HashFlags f) { return (uint32_t(flags) & u
 
 enum class HashOutputFormat
 {
-    Log,     // human-readable text
+    Hashes,  // human-readable text (.hashes)
     SFV,     // Simple File Verification (filename CRC32)
     JSON     // JSON object
 };

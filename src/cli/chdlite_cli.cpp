@@ -826,6 +826,13 @@ static int cmd_extract_typed(const Args& args, const char* type_hint)
 
 // ======================> auto command: .chd → extract, else → create
 
+static bool is_auto_supported(const fs::path& p)
+{
+    std::string ext = p.extension().string();
+    for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return ext == ".chd" || ext == ".cue" || ext == ".gdi" || ext == ".iso";
+}
+
 static int cmd_auto(const Args& args)
 {
     if (args.input.empty())
@@ -843,10 +850,88 @@ static int cmd_auto(const Args& args)
         return cmd_create(args);
 }
 
+// Run cmd_auto on a list of paths (files and/or folders).
+// Folders are scanned for supported files (.chd, .cue, .gdi, .iso).
+static int cmd_auto_batch(const Args& base_args, const std::vector<std::string>& paths)
+{
+    // Collect all files to process
+    std::vector<fs::path> files;
+    for (const auto& p : paths)
+    {
+        fs::path fp(p);
+        if (fs::is_directory(fp))
+        {
+            for (const auto& entry : fs::directory_iterator(fp))
+            {
+                if (entry.is_regular_file() && is_auto_supported(entry.path()))
+                    files.push_back(entry.path());
+            }
+        }
+        else if (fs::is_regular_file(fp))
+        {
+            files.push_back(fp);
+        }
+        else
+        {
+            std::fprintf(stderr, "Skipping (not found): %s\n", p.c_str());
+        }
+    }
+
+    std::sort(files.begin(), files.end());
+
+    if (files.empty())
+    {
+        std::fprintf(stderr, "No supported files found.\n");
+        return 1;
+    }
+
+    std::printf("Batch: %zu file(s) to process\n\n", files.size());
+
+    int ok = 0, fail = 0;
+    for (const auto& f : files)
+    {
+        std::printf("--- [%d/%d] %s ---\n", ok + fail + 1, (int)files.size(), f.filename().string().c_str());
+        Args a = base_args;
+        a.input = f.string();
+        a.command = "auto";
+        g_input_file = a.input;
+
+        int rc = cmd_auto(a);
+        if (rc == 0)
+        {
+            log_info("OK");
+            ++ok;
+        }
+        else
+        {
+            std::fprintf(stderr, "  FAILED: %s\n", f.string().c_str());
+            ++fail;
+        }
+        std::printf("\n");
+    }
+
+    std::printf("Batch complete: %d OK, %d failed, %d total\n", ok, fail, ok + fail);
+    return fail > 0 ? 1 : 0;
+}
+
+// Determine default mode from argv[0]: "chdread" → read, "chdhash" → hash, else → auto
+enum class BinaryMode { Auto, Read, Hash };
+
+static BinaryMode detect_binary_mode(const char* argv0)
+{
+    std::string name = fs::path(argv0).stem().string();
+    for (auto& c : name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (name == "chdread")  return BinaryMode::Read;
+    if (name == "chdhash")  return BinaryMode::Hash;
+    return BinaryMode::Auto;
+}
+
 // ======================> main
 
 int main(int argc, char** argv)
 {
+    const BinaryMode mode = detect_binary_mode(argv[0]);
+
     if (argc < 2)
     {
         print_usage();
@@ -894,13 +979,64 @@ int main(int argc, char** argv)
         if (cmd == "extractraw")                  return cmd_extract_typed(args, "raw");
         if (cmd == "extracthd")                   return cmd_extract_typed(args, "hd");
 
-        // Check if first arg is a file (drag-and-drop / bare input)
+        // Check if first arg is a file or directory (drag-and-drop / bare input)
         if (fs::exists(args.command))
         {
-            args.input = args.command;
-            g_input_file = args.input;
-            args.command = "auto";
-            return cmd_auto(args);
+            // Collect all bare paths from argv (skip flags and their values)
+            std::vector<std::string> paths;
+            for (int i = 1; i < argc; i++)
+            {
+                std::string a = argv[i];
+                if (a[0] == '-')
+                {
+                    // Skip flag and its value (if any)
+                    if (a == "-log" || a == "--log") ++i;
+                    continue;
+                }
+                paths.push_back(a);
+            }
+
+            // Binary mode overrides default drag-and-drop action
+            if (mode == BinaryMode::Read || mode == BinaryMode::Hash)
+            {
+                const char* mode_cmd = (mode == BinaryMode::Read) ? "read" : "hash";
+                int ok = 0, fail = 0;
+                for (const auto& p : paths)
+                {
+                    if (!fs::is_regular_file(p)) {
+                        std::fprintf(stderr, "Skipping (not a file): %s\n", p.c_str());
+                        ++fail;
+                        continue;
+                    }
+                    if (paths.size() > 1)
+                        std::printf("--- %s ---\n", fs::path(p).filename().string().c_str());
+                    Args a = args;
+                    a.input = p;
+                    a.command = mode_cmd;
+                    g_input_file = a.input;
+                    int rc = (mode == BinaryMode::Read) ? cmd_read(a) : cmd_hash(a);
+                    if (rc == 0) { log_info("OK"); ++ok; } else ++fail;
+                    if (paths.size() > 1) std::printf("\n");
+                }
+                if (paths.size() > 1)
+                    std::printf("Done: %d OK, %d failed, %d total\n", ok, fail, ok + fail);
+                return fail > 0 ? 1 : 0;
+            }
+
+            // chdlite mode: auto (extract/create)
+            if (paths.size() == 1 && fs::is_regular_file(paths[0]))
+            {
+                // Single file: direct auto
+                args.input = paths[0];
+                g_input_file = args.input;
+                args.command = "auto";
+                return cmd_auto(args);
+            }
+            else
+            {
+                // Multiple files and/or folders: batch auto
+                return cmd_auto_batch(args, paths);
+            }
         }
 
         std::fprintf(stderr, "Unknown command: %s\n\n", args.command.c_str());

@@ -31,7 +31,10 @@ add_library(lzma_sdk STATIC
     src/3rdparty/lzma/C/LzFind.c
     src/3rdparty/lzma/C/CpuArch.c
 )
-target_include_directories(lzma_sdk PUBLIC src/3rdparty/lzma/C)
+target_include_directories(lzma_sdk
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/lzma/C>
+)
 target_compile_definitions(lzma_sdk PRIVATE _7ZIP_ST Z7_ST)   # single-threaded LZMA
 set_target_properties(lzma_sdk PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -75,8 +78,8 @@ add_library(mame_chd_core STATIC
 
 target_include_directories(mame_chd_core
     PUBLIC
-        src/mame/util
-        src/mame/osd
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/mame/util>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/mame/osd>
     PRIVATE
         src/3rdparty                   # for "lzma/C/LzmaDec.h"
 )
@@ -123,7 +126,8 @@ add_library(chdlite STATIC
 
 target_include_directories(chdlite
     PUBLIC
-        src/chd-api
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/chd-api>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/chdlite>
     PRIVATE
         src/mame/util
         src/mame/osd
@@ -132,8 +136,59 @@ target_include_directories(chdlite
 target_link_libraries(chdlite PUBLIC mame_chd_core)
 
 # =====================================================================
-# Smoke test executable
+# Install rules (cmake --install build --prefix /some/path)
+# Produces headers + static libs consumable via find_package(CHDlite)
 # =====================================================================
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+install(TARGETS chdlite mame_chd_core lzma_sdk
+    EXPORT CHDliteTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+
+install(FILES
+    src/chd-api/chd_api.hpp
+    src/chd-api/chd_types.hpp
+    src/chd-api/chd_reader.hpp
+    src/chd-api/chd_processor.hpp
+    src/chd-api/chd_extractor.hpp
+    src/chd-api/chd_archiver.hpp
+    src/chd-api/detect_system.hpp
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/chdlite
+)
+
+install(EXPORT CHDliteTargets
+    FILE CHDliteTargets.cmake
+    NAMESPACE CHDlite::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/CHDlite
+)
+
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CHDliteConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/CHDliteConfig.cmake"
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/CHDlite
+)
+
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/CHDliteConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/CHDliteConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/CHDliteConfigVersion.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/CHDlite
+)
+
+# =====================================================================
+# Only build tests and CLI when this is the top-level project
+# (skip when pulled in via add_subdirectory)
+# =====================================================================
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+
+# Smoke test executable
 add_executable(smoke_test tests/smoke_test.cpp)
 target_link_libraries(smoke_test PRIVATE chdlite)
 
@@ -146,9 +201,9 @@ target_link_libraries(archive_test PRIVATE chdlite)
 add_executable(cli_test tests/cli_test.cpp)
 # cli_test only uses std::system() to invoke the CLI binary, no library link needed
 
-# =====================================================================
 # CLI tool
-# =====================================================================
 add_executable(chdlite_cli src/cli/chdlite_cli.cpp)
 target_link_libraries(chdlite_cli PRIVATE chdlite)
 set_target_properties(chdlite_cli PROPERTIES OUTPUT_NAME chdlite)
+
+endif()

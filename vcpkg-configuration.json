@@ -1,0 +1,10 @@
+{
+  "default": {
+    "registries": [
+      {
+        "kind": "builtin",
+        "baseline": "2024-05-20"
+      }
+    ]
+  }
+}

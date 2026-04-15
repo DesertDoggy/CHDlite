@@ -19,38 +19,19 @@ jobs:
         include:
           - os: macos-latest
             name: macOS-arm64
-            c_compiler: clang
-            cpp_compiler: clang++
+            triplet: arm64-osx
           - os: ubuntu-latest
             name: Linux-x86_64
-            c_compiler: gcc
-            cpp_compiler: g++
+            triplet: x64-linux
           - os: windows-latest
             name: Windows-x86_64
-            c_compiler: cl
-            cpp_compiler: cl
+            triplet: x64-windows
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y zlib1g-dev libzstd-dev libflac-dev libutf8proc-dev xxhash libxxhash-dev
-
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install zstd flac utf8proc xxhash
-
-      - name: Setup vcpkg (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          git clone https://github.com/Microsoft/vcpkg.git
-          .\vcpkg\bootstrap-vcpkg.bat
-          .\vcpkg\vcpkg install zlib zstd flac utf8proc xxhash --triplet x64-windows
-        shell: pwsh
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v10
 
       - name: Set reusable strings
         id: strings
@@ -61,10 +42,9 @@ jobs:
       - name: Configure CMake
         run: >
           cmake -B ${{ steps.strings.outputs.build-output-dir }}
-          -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
-          -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
+          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
           -DCMAKE_BUILD_TYPE=Release
-          ${{ runner.os == 'Windows' && '-DCMAKE_TOOLCHAIN_FILE=./vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows' || '' }}
           -S ${{ github.workspace }}
 
       - name: Build

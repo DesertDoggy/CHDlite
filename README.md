@@ -1,6 +1,6 @@
 # CHDlite
 
-Cross-platform CHD disc image library and command-line tool. Read, hash, extract, and create CHD files for CD, DVD, GD-ROM, and raw disc formats.
+Basically a CHDman wrapper with added functions and drag&drop support. Read, hash, extract, and create CHD files for CD, DVD, GD-ROM, and raw disc formats.
 
 Built on MAME's CHD/chdman implementation with a C++
 
@@ -17,7 +17,7 @@ Built on MAME's CHD/chdman implementation with a C++
 - **Create** CHD from CUE/BIN, GDI, ISO, or raw image
 - **Auto-detect** content type: CD-ROM, DVD, GD-ROM (Dreamcast), Hard Disk, Raw
 - **System detection**: PS1, PS2, PSP, Saturn, Mega CD, 3DO, Dreamcast (PC Engine detection is WIP)
-- **Drag-and-drop** support — drop files or folders onto the binary
+- **Drag-and-drop** support — drop files or folders onto the binary **WIP For the moment Windows only + read/hash is useless due to terminal closing on exit. (use cli for read/hash)
 - **Batch processing** — process multiple files and folders in one invocation
 - **chdman-compatible** commands for drop-in replacement workflows
 - **Usable as a C++ static library** in other projects

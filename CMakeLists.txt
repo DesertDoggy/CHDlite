@@ -32,10 +32,6 @@ if(WIN32)
         set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${CONF_UPPER} "${CMAKE_SOURCE_DIR}/Release/lib")
         set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${CONF_UPPER} "${CMAKE_SOURCE_DIR}/Release/lib")
     endforeach()
-elseif(APPLE)
-    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/Release/bin")
-    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/Release/lib")
-    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/Release/lib")
 endif()
 
 # Compiler options
@@ -183,7 +179,7 @@ target_include_directories(chdlite
 target_link_libraries(chdlite PUBLIC mame_chd_core)
 
 # =====================================================================
-# CHDlite shared library (DLL on Windows, dylib on macOS, so on Linux)
+# CHDlite shared library (DLL + import lib)
 # =====================================================================
 add_library(chdlite_shared SHARED
     src/chd-api/chd_reader.cpp
@@ -192,22 +188,6 @@ add_library(chdlite_shared SHARED
     src/chd-api/chd_archiver.cpp
     src/chd-api/detect_system.cpp
 )
-
-set_target_properties(chdlite_shared PROPERTIES
-    OUTPUT_NAME chdlite
-    WINDOWS_EXPORT_ALL_SYMBOLS ON
-)
-
-# macOS-specific dylib configuration
-if(APPLE)
-    set_target_properties(chdlite_shared PROPERTIES
-        MACOSX_RPATH ON
-        INSTALL_RPATH "@loader_path/../lib"
-        BUILD_RPATH "@loader_path/../lib"
-        VERSION ${PROJECT_VERSION}
-        SOVERSION ${PROJECT_VERSION_MAJOR}
-    )
-endif()
 
 target_include_directories(chdlite_shared
     PUBLIC
@@ -220,11 +200,21 @@ target_include_directories(chdlite_shared
 
 target_link_libraries(chdlite_shared PUBLIC mame_chd_core)
 
-# Self-sign dylib on macOS to avoid Gatekeeper warnings
-if(APPLE)
+# Configure DLL and import library output names
+set_target_properties(chdlite_shared PROPERTIES
+    OUTPUT_NAME chdlite                # DLL named: chdlite.dll
+    PREFIX ""                          # No lib prefix
+    SUFFIX ".dll"
+)
+
+# Windows: copy import library with new name (cdhilite_shared.lib)
+if(WIN32)
     add_custom_command(TARGET chdlite_shared POST_BUILD
-        COMMAND codesign -s - --force --deep "$<TARGET_FILE:chdlite_shared>"
-        COMMENT "Self-signing chdlite dylib"
+        COMMAND ${CMAKE_COMMAND} -E copy
+            "${CMAKE_ARCHIVE_OUTPUT_DIRECTORY}/chdlite.lib"
+            "${CMAKE_ARCHIVE_OUTPUT_DIRECTORY}/cdhilite_shared.lib"
+        COMMENT "Creating cdhilite_shared.lib copy"
+        VERBATIM
     )
 endif()
 
@@ -235,7 +225,7 @@ endif()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-install(TARGETS chdlite chdlite_shared mame_chd_core lzma_sdk
+install(TARGETS chdlite mame_chd_core lzma_sdk
     EXPORT CHDliteTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )

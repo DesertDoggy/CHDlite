@@ -183,11 +183,11 @@ static TestPaths discover_paths(const std::string& root)
     tp.chd_root = root;
     tp.out_root = (fs::path(root) / "cli_test_output").string();
 
-    auto find = [&](const std::string& subdir, const std::string& glob_base) -> std::string {
+    auto find = [&](const std::string& subdir, const std::string& ext) -> std::string {
         std::string dir = (fs::path(root) / subdir).string();
         if (!fs::exists(dir)) return {};
         for (auto& e : fs::directory_iterator(dir))
-            if (e.path().filename().string().find(glob_base) != std::string::npos)
+            if (e.path().extension().string() == ext)
                 return e.path().string();
         return {};
     };
@@ -237,7 +237,7 @@ static void block_read(const TestPaths& tp)
         check(contains(out, "Content Type: DVD"), "read shows content type");
         check(contains(out, "Hunk Size:"), "read shows hunk size");
         check(contains(out, "SHA-1:"), "read shows SHA-1");
-        check(contains(out, "System:") && contains(out, "PlayStation 2"), "read shows system detection");
+        check(contains(out, "Platform:") && contains(out, "PlayStation 2"), "read shows system detection");
     }
     else skip("read bare-input", "PS2 CHD not found");
 
@@ -257,7 +257,7 @@ static void block_read(const TestPaths& tp)
         int rc = run("read \"" + tp.dc_chd + "\"", &out);
         check(rc == 0, "read GD-ROM exits 0");
         check(contains(out, "GD-ROM"), "read shows GD-ROM in tracks line");
-        check(contains(out, "System:") && contains(out, "Dreamcast"), "read detects Dreamcast system");
+        check(contains(out, "Platform:") && contains(out, "Dreamcast"), "read detects Dreamcast system");
     }
     else skip("read GD-ROM", "Dreamcast CHD not found");
 
@@ -750,12 +750,18 @@ static void block_log()
     {
         std::string log = read_text_file(LOG_PATH);
 
-        // Count entries (each starts with "---")
+        // Count entries (each line is one spdlog entry: [timestamp] [level] ...)
         int entries = 0;
         std::string::size_type pos = 0;
-        while ((pos = log.find("---\n", pos)) != std::string::npos) {
+        while ((pos = log.find("[info]", pos)) != std::string::npos) {
             entries++;
-            pos += 4;
+            pos += 6;
+        }
+        // Also count error entries
+        pos = 0;
+        while ((pos = log.find("[error]", pos)) != std::string::npos) {
+            entries++;
+            pos += 7;
         }
 
         check_val(entries >= g_run_ok,
@@ -763,15 +769,15 @@ static void block_log()
                   "entries=" + std::to_string(entries) +
                   " successful_runs=" + std::to_string(g_run_ok));
 
-        // Each entry should have the basic fields
-        check(contains(log, "Time:"), "log contains timestamps");
-        check(contains(log, "Version:"), "log contains version");
-        check(contains(log, "Command:"), "log contains command lines");
-        check(contains(log, "Status:"), "log contains status");
+        // Each entry should have the basic fields (spdlog format)
+        check(contains(log, "[20"), "log contains timestamps");
+        check(contains(log, "v0."), "log contains version");
+        check(contains(log, "cmd="), "log contains command lines");
+        check(contains(log, "OK"), "log contains status");
 
         // Should have both OK and ERROR entries from block 9 error cases
         check(contains(log, "OK"), "log has success entries");
-        check(contains(log, "ERROR"), "log has error entries");
+        check(contains(log, "[error]"), "log has error entries");
     }
 }
 

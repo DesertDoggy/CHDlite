@@ -75,7 +75,7 @@ static void init_log(int argc, char** argv)
     fs::create_directories(g_logs_dir, ec);
     std::string log_path = (g_logs_dir / "chdlite.log").string();
 
-    auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_path, false /*append*/);
+    auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_path, false /*truncate=false, i.e. append*/);
     g_logger = std::make_shared<spdlog::logger>("chdlite", file_sink);
     g_logger->set_pattern("[%Y-%m-%d %H:%M:%S] [%l] %v");
     g_logger->set_level(spdlog::level::trace);  // gate via g_log_level below
@@ -498,10 +498,18 @@ static int cmd_read(const Args& args)
                             inp.filename().string().c_str(),
                             e.path().filename().string().c_str());
                         std::printf("Use:     read \"%s\"\n", e.path().string().c_str());
+                        log_info("skipped .bin redirect to " + e.path().filename().string());
                         return 0;
                     }
                 }
             }
+        }
+
+        if (!fs::exists(args.input))
+        {
+            std::fprintf(stderr, "Error: file not found: %s\n", args.input.c_str());
+            log_error("file not found: " + args.input);
+            return 1;
         }
 
         std::printf("Input file:   %s\n", args.input.c_str());

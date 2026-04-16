@@ -206,7 +206,7 @@ std::error_condition osd_file::open(std::string const &path, std::uint32_t openf
 	if (openflags & OPEN_FLAG_CREATE)
 		creation = CREATE_ALWAYS;
 
-	HANDLE h = CreateFileA(path.c_str(), access, share, nullptr, creation, FILE_ATTRIBUTE_NORMAL, nullptr);
+	HANDLE h = CreateFileA(path.c_str(), access, share, nullptr, creation, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
 	if (h == INVALID_HANDLE_VALUE)
 		return std::error_condition(GetLastError(), std::system_category());
 
@@ -236,6 +236,13 @@ std::error_condition osd_file::open(std::string const &path, std::uint32_t openf
 	int fd = ::open(path.c_str(), flags, 0666);
 	if (fd < 0)
 		return errno_to_error_condition();
+
+	// Sequential read hint for kernel I/O prefetch
+#if defined(__APPLE__)
+	fcntl(fd, F_RDAHEAD, 1);
+#elif defined(__linux__)
+	posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);  // not tested yet
+#endif
 
 	struct stat st;
 	if (::fstat(fd, &st) < 0)

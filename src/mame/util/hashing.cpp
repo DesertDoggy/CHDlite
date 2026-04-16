@@ -21,6 +21,28 @@
 #include <mutex>
 #include <sstream>
 
+// SIMD headers for hardware-accelerated SHA1/SHA256
+#if defined(__aarch64__) || defined(_M_ARM64)
+#  include <arm_neon.h>
+#  if defined(__ARM_FEATURE_CRYPTO) || defined(__ARM_FEATURE_SHA2) || defined(__APPLE__)
+#    define CHDLITE_ARM_SHA 1
+#  endif
+#elif defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#  if defined(__SHA__) && defined(__SSE4_1__)
+#    define CHDLITE_X86_SHA 1
+#    include <immintrin.h>
+#  elif !defined(_MSC_VER)
+     // x86 without compile-time SHA-NI: runtime CPUID dispatch
+#    include <cpuid.h>
+#    include <immintrin.h>
+#    define CHDLITE_X86_SHA_DISPATCH 1
+#  elif defined(_MSC_VER)
+#    include <intrin.h>
+#    include <immintrin.h>
+#    define CHDLITE_X86_SHA_DISPATCH 1
+#  endif
+#endif
+
 
 namespace util {
 
@@ -103,6 +125,595 @@ inline void sha1_process(std::array<uint32_t, 5> &st, uint32_t *data) noexcept
 	for (i = 0U; i < 5U; i++)
 		st[i] += d[i];
 }
+
+// =====================================================================
+// ARM64 Cryptographic Extensions — SHA1
+// =====================================================================
+#if defined(CHDLITE_ARM_SHA)
+
+inline void sha1_process_arm(std::array<uint32_t, 5> &st, uint32_t *data) noexcept
+{
+	// MAME state layout: st[4]=A, st[3]=B, st[2]=C, st[1]=D, st[0]=E
+	// ARM SHA1 intrinsics expect: ABCD in one uint32x4_t, E scalar
+	uint32_t tmp_abcd[4] = { st[4], st[3], st[2], st[1] };
+	uint32x4_t abcd = vld1q_u32(tmp_abcd);
+	uint32_t   e0   = st[0];
+
+	// Save original state
+	uint32x4_t abcd_saved = abcd;
+	uint32_t   e0_saved   = e0;
+
+	// Load and byte-swap message (MAME stores data in host-endian in m_buf via XOR swizzle)
+	// data[] is already in big-endian uint32_t form (the scalar path reads bytes with ^3 swizzle)
+	uint32x4_t msg0 = vld1q_u32(&data[0]);
+	uint32x4_t msg1 = vld1q_u32(&data[4]);
+	uint32x4_t msg2 = vld1q_u32(&data[8]);
+	uint32x4_t msg3 = vld1q_u32(&data[12]);
+
+	uint32x4_t tmp0, tmp1;
+	uint32_t e1;
+
+	// Rounds 0-3
+	tmp0 = vaddq_u32(msg0, vdupq_n_u32(0x5A827999));
+	e1 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1cq_u32(abcd, e0, tmp0);
+	msg0 = vsha1su0q_u32(msg0, msg1, msg2);
+
+	// Rounds 4-7
+	tmp1 = vaddq_u32(msg1, vdupq_n_u32(0x5A827999));
+	e0 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1cq_u32(abcd, e1, tmp1);
+	msg0 = vsha1su1q_u32(msg0, msg3);
+	msg1 = vsha1su0q_u32(msg1, msg2, msg3);
+
+	// Rounds 8-11
+	tmp0 = vaddq_u32(msg2, vdupq_n_u32(0x5A827999));
+	e1 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1cq_u32(abcd, e0, tmp0);
+	msg1 = vsha1su1q_u32(msg1, msg0);
+	msg2 = vsha1su0q_u32(msg2, msg3, msg0);
+
+	// Rounds 12-15
+	tmp1 = vaddq_u32(msg3, vdupq_n_u32(0x5A827999));
+	e0 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1cq_u32(abcd, e1, tmp1);
+	msg2 = vsha1su1q_u32(msg2, msg1);
+	msg3 = vsha1su0q_u32(msg3, msg0, msg1);
+
+	// Rounds 16-19
+	tmp0 = vaddq_u32(msg0, vdupq_n_u32(0x5A827999));
+	e1 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1cq_u32(abcd, e0, tmp0);
+	msg3 = vsha1su1q_u32(msg3, msg2);
+	msg0 = vsha1su0q_u32(msg0, msg1, msg2);
+
+	// Rounds 20-23
+	tmp1 = vaddq_u32(msg1, vdupq_n_u32(0x6ED9EBA1));
+	e0 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1pq_u32(abcd, e1, tmp1);
+	msg0 = vsha1su1q_u32(msg0, msg3);
+	msg1 = vsha1su0q_u32(msg1, msg2, msg3);
+
+	// Rounds 24-27
+	tmp0 = vaddq_u32(msg2, vdupq_n_u32(0x6ED9EBA1));
+	e1 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1pq_u32(abcd, e0, tmp0);
+	msg1 = vsha1su1q_u32(msg1, msg0);
+	msg2 = vsha1su0q_u32(msg2, msg3, msg0);
+
+	// Rounds 28-31
+	tmp1 = vaddq_u32(msg3, vdupq_n_u32(0x6ED9EBA1));
+	e0 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1pq_u32(abcd, e1, tmp1);
+	msg2 = vsha1su1q_u32(msg2, msg1);
+	msg3 = vsha1su0q_u32(msg3, msg0, msg1);
+
+	// Rounds 32-35
+	tmp0 = vaddq_u32(msg0, vdupq_n_u32(0x6ED9EBA1));
+	e1 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1pq_u32(abcd, e0, tmp0);
+	msg3 = vsha1su1q_u32(msg3, msg2);
+	msg0 = vsha1su0q_u32(msg0, msg1, msg2);
+
+	// Rounds 36-39
+	tmp1 = vaddq_u32(msg1, vdupq_n_u32(0x6ED9EBA1));
+	e0 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1pq_u32(abcd, e1, tmp1);
+	msg0 = vsha1su1q_u32(msg0, msg3);
+	msg1 = vsha1su0q_u32(msg1, msg2, msg3);
+
+	// Rounds 40-43
+	tmp0 = vaddq_u32(msg2, vdupq_n_u32(0x8F1BBCDC));
+	e1 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1mq_u32(abcd, e0, tmp0);
+	msg1 = vsha1su1q_u32(msg1, msg0);
+	msg2 = vsha1su0q_u32(msg2, msg3, msg0);
+
+	// Rounds 44-47
+	tmp1 = vaddq_u32(msg3, vdupq_n_u32(0x8F1BBCDC));
+	e0 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1mq_u32(abcd, e1, tmp1);
+	msg2 = vsha1su1q_u32(msg2, msg1);
+	msg3 = vsha1su0q_u32(msg3, msg0, msg1);
+
+	// Rounds 48-51
+	tmp0 = vaddq_u32(msg0, vdupq_n_u32(0x8F1BBCDC));
+	e1 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1mq_u32(abcd, e0, tmp0);
+	msg3 = vsha1su1q_u32(msg3, msg2);
+	msg0 = vsha1su0q_u32(msg0, msg1, msg2);
+
+	// Rounds 52-55
+	tmp1 = vaddq_u32(msg1, vdupq_n_u32(0x8F1BBCDC));
+	e0 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1mq_u32(abcd, e1, tmp1);
+	msg0 = vsha1su1q_u32(msg0, msg3);
+	msg1 = vsha1su0q_u32(msg1, msg2, msg3);
+
+	// Rounds 56-59
+	tmp0 = vaddq_u32(msg2, vdupq_n_u32(0x8F1BBCDC));
+	e1 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1mq_u32(abcd, e0, tmp0);
+	msg1 = vsha1su1q_u32(msg1, msg0);
+	msg2 = vsha1su0q_u32(msg2, msg3, msg0);
+
+	// Rounds 60-63
+	tmp1 = vaddq_u32(msg3, vdupq_n_u32(0xCA62C1D6));
+	e0 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1pq_u32(abcd, e1, tmp1);
+	msg2 = vsha1su1q_u32(msg2, msg1);
+	msg3 = vsha1su0q_u32(msg3, msg0, msg1);
+
+	// Rounds 64-67
+	tmp0 = vaddq_u32(msg0, vdupq_n_u32(0xCA62C1D6));
+	e1 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1pq_u32(abcd, e0, tmp0);
+	msg3 = vsha1su1q_u32(msg3, msg2);
+
+	// Rounds 68-71
+	tmp1 = vaddq_u32(msg1, vdupq_n_u32(0xCA62C1D6));
+	e0 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1pq_u32(abcd, e1, tmp1);
+
+	// Rounds 72-75
+	tmp0 = vaddq_u32(msg2, vdupq_n_u32(0xCA62C1D6));
+	e1 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1pq_u32(abcd, e0, tmp0);
+
+	// Rounds 76-79
+	tmp1 = vaddq_u32(msg3, vdupq_n_u32(0xCA62C1D6));
+	e0 = vsha1h_u32(vgetq_lane_u32(abcd, 0));
+	abcd = vsha1pq_u32(abcd, e1, tmp1);
+
+	// Update state — store back in MAME's reversed order
+	st[0] = e0 + e0_saved;
+	abcd = vaddq_u32(abcd, abcd_saved);
+	uint32_t out_abcd[4];
+	vst1q_u32(out_abcd, abcd);
+	st[4] = out_abcd[0]; // A
+	st[3] = out_abcd[1]; // B
+	st[2] = out_abcd[2]; // C
+	st[1] = out_abcd[3]; // D
+}
+
+#endif // CHDLITE_ARM_SHA
+
+// =====================================================================
+// x86 SHA-NI — SHA1 (Intel Ice Lake+ / AMD Zen+)
+// =====================================================================
+#if defined(CHDLITE_X86_SHA) || defined(CHDLITE_X86_SHA_DISPATCH)
+
+#if defined(CHDLITE_X86_SHA_DISPATCH) && !defined(__SHA__)
+// Compile SHA-NI functions with target attribute for runtime dispatch
+#define SHA_TARGET __attribute__((target("sha,sse4.1")))
+#else
+#define SHA_TARGET
+#endif
+
+SHA_TARGET
+inline void sha1_process_x86(std::array<uint32_t, 5> &st, uint32_t *data) noexcept
+{
+	__m128i abcd, e0, e1;
+	__m128i msg0, msg1, msg2, msg3;
+	__m128i abcd_save, e_save;
+
+	// Load state: ABCD in one register, E in another
+	abcd = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&st[0]));
+	e0   = _mm_set_epi32(st[4], 0, 0, 0);
+	// SHA-NI expects DCBA order
+	abcd = _mm_shuffle_epi32(abcd, 0x1B);
+
+	abcd_save = abcd;
+	e_save = e0;
+
+	// Load message — data[] is already in big-endian uint32_t form
+	// (sha1_creator::append byte-swaps via XOR swizzle on little-endian)
+	msg0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&data[0]));
+	msg1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&data[4]));
+	msg2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&data[8]));
+	msg3 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&data[12]));
+
+	// Rounds 0-3
+	e0   = _mm_add_epi32(e0, msg0);
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 0);
+	e0   = _mm_sha1nexte_epu32(e0, msg1);
+	msg0 = _mm_sha1msg1_epu32(msg0, msg1);
+
+	// Rounds 4-7
+	e1   = _mm_sha1nexte_epu32(e1, msg2); (void)e1;
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 0);
+	e0   = _mm_sha1nexte_epu32(e0, msg2);
+	msg1 = _mm_sha1msg1_epu32(msg1, msg2);
+	msg0 = _mm_xor_si128(msg0, msg2);
+
+	// Rounds 8-11
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 0);
+	e0   = _mm_sha1nexte_epu32(e0, msg3);
+	msg2 = _mm_sha1msg1_epu32(msg2, msg3);
+	msg0 = _mm_sha1msg2_epu32(msg0, msg3);
+	msg1 = _mm_xor_si128(msg1, msg3);
+
+	// Rounds 12-15
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 0);
+	e0   = _mm_sha1nexte_epu32(e0, msg0);
+	msg3 = _mm_sha1msg1_epu32(msg3, msg0);
+	msg1 = _mm_sha1msg2_epu32(msg1, msg0);
+	msg2 = _mm_xor_si128(msg2, msg0);
+
+	// Rounds 16-19
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 0);
+	e0   = _mm_sha1nexte_epu32(e0, msg1);
+	msg0 = _mm_sha1msg1_epu32(msg0, msg1);
+	msg2 = _mm_sha1msg2_epu32(msg2, msg1);
+	msg3 = _mm_xor_si128(msg3, msg1);
+
+	// Rounds 20-23
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 1);
+	e0   = _mm_sha1nexte_epu32(e0, msg2);
+	msg1 = _mm_sha1msg1_epu32(msg1, msg2);
+	msg3 = _mm_sha1msg2_epu32(msg3, msg2);
+	msg0 = _mm_xor_si128(msg0, msg2);
+
+	// Rounds 24-27
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 1);
+	e0   = _mm_sha1nexte_epu32(e0, msg3);
+	msg2 = _mm_sha1msg1_epu32(msg2, msg3);
+	msg0 = _mm_sha1msg2_epu32(msg0, msg3);
+	msg1 = _mm_xor_si128(msg1, msg3);
+
+	// Rounds 28-31
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 1);
+	e0   = _mm_sha1nexte_epu32(e0, msg0);
+	msg3 = _mm_sha1msg1_epu32(msg3, msg0);
+	msg1 = _mm_sha1msg2_epu32(msg1, msg0);
+	msg2 = _mm_xor_si128(msg2, msg0);
+
+	// Rounds 32-35
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 1);
+	e0   = _mm_sha1nexte_epu32(e0, msg1);
+	msg0 = _mm_sha1msg1_epu32(msg0, msg1);
+	msg2 = _mm_sha1msg2_epu32(msg2, msg1);
+	msg3 = _mm_xor_si128(msg3, msg1);
+
+	// Rounds 36-39
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 1);
+	e0   = _mm_sha1nexte_epu32(e0, msg2);
+	msg1 = _mm_sha1msg1_epu32(msg1, msg2);
+	msg3 = _mm_sha1msg2_epu32(msg3, msg2);
+	msg0 = _mm_xor_si128(msg0, msg2);
+
+	// Rounds 40-43
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 2);
+	e0   = _mm_sha1nexte_epu32(e0, msg3);
+	msg2 = _mm_sha1msg1_epu32(msg2, msg3);
+	msg0 = _mm_sha1msg2_epu32(msg0, msg3);
+	msg1 = _mm_xor_si128(msg1, msg3);
+
+	// Rounds 44-47
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 2);
+	e0   = _mm_sha1nexte_epu32(e0, msg0);
+	msg3 = _mm_sha1msg1_epu32(msg3, msg0);
+	msg1 = _mm_sha1msg2_epu32(msg1, msg0);
+	msg2 = _mm_xor_si128(msg2, msg0);
+
+	// Rounds 48-51
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 2);
+	e0   = _mm_sha1nexte_epu32(e0, msg1);
+	msg0 = _mm_sha1msg1_epu32(msg0, msg1);
+	msg2 = _mm_sha1msg2_epu32(msg2, msg1);
+	msg3 = _mm_xor_si128(msg3, msg1);
+
+	// Rounds 52-55
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 2);
+	e0   = _mm_sha1nexte_epu32(e0, msg2);
+	msg1 = _mm_sha1msg1_epu32(msg1, msg2);
+	msg3 = _mm_sha1msg2_epu32(msg3, msg2);
+	msg0 = _mm_xor_si128(msg0, msg2);
+
+	// Rounds 56-59
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 2);
+	e0   = _mm_sha1nexte_epu32(e0, msg3);
+	msg2 = _mm_sha1msg1_epu32(msg2, msg3);
+	msg0 = _mm_sha1msg2_epu32(msg0, msg3);
+	msg1 = _mm_xor_si128(msg1, msg3);
+
+	// Rounds 60-63
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 3);
+	e0   = _mm_sha1nexte_epu32(e0, msg0);
+	msg3 = _mm_sha1msg1_epu32(msg3, msg0);
+	msg1 = _mm_sha1msg2_epu32(msg1, msg0);
+	msg2 = _mm_xor_si128(msg2, msg0);
+
+	// Rounds 64-67
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 3);
+	e0   = _mm_sha1nexte_epu32(e0, msg1);
+	msg2 = _mm_sha1msg2_epu32(msg2, msg1);
+	msg3 = _mm_xor_si128(msg3, msg1);
+
+	// Rounds 68-71
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 3);
+	e0   = _mm_sha1nexte_epu32(e0, msg2);
+	msg3 = _mm_sha1msg2_epu32(msg3, msg2);
+
+	// Rounds 72-75
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 3);
+	e0   = _mm_sha1nexte_epu32(e0, msg3);
+
+	// Rounds 76-79
+	e1   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e0, 3);
+
+	// Update state
+	e0   = _mm_sha1nexte_epu32(e0, e_save);
+	abcd = _mm_add_epi32(abcd, abcd_save);
+
+	// Store back — reverse DCBA→ABCD
+	abcd = _mm_shuffle_epi32(abcd, 0x1B);
+	_mm_storeu_si128(reinterpret_cast<__m128i*>(&st[0]), abcd);
+	st[4] = _mm_extract_epi32(e0, 3);
+}
+
+// =====================================================================
+// x86 SHA-NI — SHA256 transform
+// =====================================================================
+
+SHA_TARGET
+void sha256_transform_x86(uint32_t state[8], const uint8_t block[64]) noexcept
+{
+	__m128i state0, state1, state0_save, state1_save;
+	__m128i msg, tmp;
+	__m128i msg0, msg1, msg2, msg3;
+	__m128i shuf_mask = _mm_set_epi64x(0x0c0d0e0f08090a0bULL, 0x0405060700010203ULL);
+
+	// Load initial state (ABEF, CDGH order for SHA-NI)
+	tmp    = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&state[0]));  // ABCD
+	state1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&state[4]));  // EFGH
+
+	tmp    = _mm_shuffle_epi32(tmp, 0xB1);       // CDAB
+	state1 = _mm_shuffle_epi32(state1, 0x1B);    // HGFE
+	state0 = _mm_alignr_epi8(tmp, state1, 8);    // ABEF
+	state1 = _mm_blend_epi16(state1, tmp, 0xF0); // CDGH
+
+	state0_save = state0;
+	state1_save = state1;
+
+	// Rounds 0-3
+	msg0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&block[0]));
+	msg0 = _mm_shuffle_epi8(msg0, shuf_mask);
+	msg  = _mm_add_epi32(msg0, _mm_set_epi64x(0xE9B5DBA5B5C0FBCFULL, 0x71374491428A2F98ULL));
+	state1 = _mm_sha256rnds2_epu32(state1, state0, msg);
+	msg  = _mm_shuffle_epi32(msg, 0x0E);
+	state0 = _mm_sha256rnds2_epu32(state0, state1, msg);
+
+	// Rounds 4-7
+	msg1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&block[16]));
+	msg1 = _mm_shuffle_epi8(msg1, shuf_mask);
+	msg  = _mm_add_epi32(msg1, _mm_set_epi64x(0xAB1C5ED5923F82A4ULL, 0x59F111F13956C25BULL));
+	state1 = _mm_sha256rnds2_epu32(state1, state0, msg);
+	msg  = _mm_shuffle_epi32(msg, 0x0E);
+	state0 = _mm_sha256rnds2_epu32(state0, state1, msg);
+	msg0 = _mm_sha256msg1_epu32(msg0, msg1);
+
+	// Rounds 8-11
+	msg2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&block[32]));
+	msg2 = _mm_shuffle_epi8(msg2, shuf_mask);
+	msg  = _mm_add_epi32(msg2, _mm_set_epi64x(0x550C7DC3243185BEULL, 0x12835B01D807AA98ULL));
+	state1 = _mm_sha256rnds2_epu32(state1, state0, msg);
+	msg  = _mm_shuffle_epi32(msg, 0x0E);
+	state0 = _mm_sha256rnds2_epu32(state0, state1, msg);
+	msg1 = _mm_sha256msg1_epu32(msg1, msg2);
+
+	// Rounds 12-15
+	msg3 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&block[48]));
+	msg3 = _mm_shuffle_epi8(msg3, shuf_mask);
+	msg  = _mm_add_epi32(msg3, _mm_set_epi64x(0xC19BF174C19BF174ULL, 0x9BDC06A780DEB1FEULL));
+	state1 = _mm_sha256rnds2_epu32(state1, state0, msg);
+	tmp  = _mm_alignr_epi8(msg3, msg2, 4);
+	msg0 = _mm_add_epi32(msg0, tmp);
+	msg0 = _mm_sha256msg2_epu32(msg0, msg3);
+	msg  = _mm_shuffle_epi32(msg, 0x0E);
+	state0 = _mm_sha256rnds2_epu32(state0, state1, msg);
+	msg2 = _mm_sha256msg1_epu32(msg2, msg3);
+
+	// Rounds 16-19 through 60-63 (repeating pattern)
+	#define SHA256_ROUND_X86(ra, rb, rc, rd, k_hi, k_lo) \
+		msg  = _mm_add_epi32(ra, _mm_set_epi64x(k_hi, k_lo)); \
+		state1 = _mm_sha256rnds2_epu32(state1, state0, msg); \
+		tmp  = _mm_alignr_epi8(ra, rd, 4); \
+		rb   = _mm_add_epi32(rb, tmp); \
+		rb   = _mm_sha256msg2_epu32(rb, ra); \
+		msg  = _mm_shuffle_epi32(msg, 0x0E); \
+		state0 = _mm_sha256rnds2_epu32(state0, state1, msg); \
+		rd   = _mm_sha256msg1_epu32(rd, ra);
+
+	// Rounds 16-19
+	SHA256_ROUND_X86(msg0, msg1, msg2, msg3, 0x240CA1CC0FC19DC6ULL, 0xEFBE4786E49B69C1ULL)
+	// Rounds 20-23
+	SHA256_ROUND_X86(msg1, msg2, msg3, msg0, 0x76F988DA5CB0A9DCULL, 0x4A7484AA2DE92C6FULL)
+	// Rounds 24-27
+	SHA256_ROUND_X86(msg2, msg3, msg0, msg1, 0xBF597FC7B00327C8ULL, 0xA831C66D983E5152ULL)
+	// Rounds 28-31
+	SHA256_ROUND_X86(msg3, msg0, msg1, msg2, 0x1429296706CA6351ULL, 0xD5A79147C6E00BF3ULL)
+	// Rounds 32-35
+	SHA256_ROUND_X86(msg0, msg1, msg2, msg3, 0x53380D134D2C6DFCULL, 0x2E1B213827B70A85ULL)
+	// Rounds 36-39
+	SHA256_ROUND_X86(msg1, msg2, msg3, msg0, 0x92722C8581C2C92EULL, 0x766A0ABB650A7354ULL)
+	// Rounds 40-43
+	SHA256_ROUND_X86(msg2, msg3, msg0, msg1, 0xC76C51A3C24B8B70ULL, 0xA81A664BA2BFE8A1ULL)
+	// Rounds 44-47
+	SHA256_ROUND_X86(msg3, msg0, msg1, msg2, 0x106AA07032BBD1B8ULL, 0xF40E3585D6990624ULL)
+	// Rounds 48-51
+	SHA256_ROUND_X86(msg0, msg1, msg2, msg3, 0x34B0BCB519A4C116ULL, 0x1E376C082748774CULL)
+
+	#undef SHA256_ROUND_X86
+
+	// Rounds 52-55 (no msg schedule for msg3)
+	msg  = _mm_add_epi32(msg1, _mm_set_epi64x(0x682E6FF35B9CCA4FULL, 0x4ED8AA4A391C0CB3ULL));
+	state1 = _mm_sha256rnds2_epu32(state1, state0, msg);
+	tmp  = _mm_alignr_epi8(msg1, msg0, 4);
+	msg2 = _mm_add_epi32(msg2, tmp);
+	msg2 = _mm_sha256msg2_epu32(msg2, msg1);
+	msg  = _mm_shuffle_epi32(msg, 0x0E);
+	state0 = _mm_sha256rnds2_epu32(state0, state1, msg);
+
+	// Rounds 56-59
+	msg  = _mm_add_epi32(msg2, _mm_set_epi64x(0x8CC7020884C87814ULL, 0x78A5636F748F82EEULL));
+	state1 = _mm_sha256rnds2_epu32(state1, state0, msg);
+	tmp  = _mm_alignr_epi8(msg2, msg1, 4);
+	msg3 = _mm_add_epi32(msg3, tmp);
+	msg3 = _mm_sha256msg2_epu32(msg3, msg2);
+	msg  = _mm_shuffle_epi32(msg, 0x0E);
+	state0 = _mm_sha256rnds2_epu32(state0, state1, msg);
+
+	// Rounds 60-63
+	msg  = _mm_add_epi32(msg3, _mm_set_epi64x(0xC67178F2BEF9A3F7ULL, 0xA4506CEB90BEFFFAULL));
+	state1 = _mm_sha256rnds2_epu32(state1, state0, msg);
+	msg  = _mm_shuffle_epi32(msg, 0x0E);
+	state0 = _mm_sha256rnds2_epu32(state0, state1, msg);
+
+	// Add saved state
+	state0 = _mm_add_epi32(state0, state0_save);
+	state1 = _mm_add_epi32(state1, state1_save);
+
+	// Reorder to ABCDEFGH
+	tmp    = _mm_shuffle_epi32(state0, 0x1B);    // FEBA
+	state1 = _mm_shuffle_epi32(state1, 0xB1);    // DCHG
+	state0 = _mm_blend_epi16(tmp, state1, 0xF0); // DCBA → ABCD
+	state1 = _mm_alignr_epi8(state1, tmp, 8);    // ABEF → EFGH
+
+	_mm_storeu_si128(reinterpret_cast<__m128i*>(&state[0]), state0);
+	_mm_storeu_si128(reinterpret_cast<__m128i*>(&state[4]), state1);
+}
+
+#undef SHA_TARGET
+
+// =====================================================================
+// x86 CPUID check for SHA-NI support
+// =====================================================================
+#if defined(CHDLITE_X86_SHA_DISPATCH)
+static bool cpu_has_sha_ni() noexcept
+{
+#if defined(_MSC_VER)
+	int info[4];
+	__cpuidex(info, 7, 0);
+	return (info[1] & (1 << 29)) != 0;  // EBX bit 29 = SHA
+#else
+	unsigned int eax, ebx, ecx, edx;
+	if (__get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx))
+		return (ebx & (1 << 29)) != 0;  // EBX bit 29 = SHA
+	return false;
+#endif
+}
+
+static bool s_has_sha_ni = cpu_has_sha_ni();
+#endif // CHDLITE_X86_SHA_DISPATCH
+
+#endif // CHDLITE_X86_SHA || CHDLITE_X86_SHA_DISPATCH
+
+// =====================================================================
+// ARM64 Cryptographic Extensions — SHA256
+// =====================================================================
+#if defined(CHDLITE_ARM_SHA)
+
+void sha256_transform_arm(uint32_t state[8], const uint8_t block[64]) noexcept
+{
+	static const uint32_t sha256_k_arm[64] = {
+		0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+		0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+		0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+		0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+		0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+		0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+		0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+		0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+	};
+
+	uint32x4_t state0 = vld1q_u32(&state[0]);
+	uint32x4_t state1 = vld1q_u32(&state[4]);
+	uint32x4_t state0_save = state0;
+	uint32x4_t state1_save = state1;
+
+	// Load message (big-endian byte-swap)
+	uint32x4_t msg0 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(&block[0])));
+	uint32x4_t msg1 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(&block[16])));
+	uint32x4_t msg2 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(&block[32])));
+	uint32x4_t msg3 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(&block[48])));
+
+	uint32x4_t tmp0, tmp1;
+
+	#define SHA256_ROUND_ARM(i, m, m0, m1, m2, m3) \
+		tmp0  = vaddq_u32(m, vld1q_u32(&sha256_k_arm[(i)*4])); \
+		tmp1  = state0; \
+		state0 = vsha256hq_u32(state0, state1, tmp0); \
+		state1 = vsha256h2q_u32(state1, tmp1, tmp0); \
+		if ((i) < 12) m0 = vsha256su1q_u32(vsha256su0q_u32(m0, m1), m2, m3);
+
+	SHA256_ROUND_ARM(0,  msg0, msg0, msg1, msg2, msg3)
+	SHA256_ROUND_ARM(1,  msg1, msg1, msg2, msg3, msg0)
+	SHA256_ROUND_ARM(2,  msg2, msg2, msg3, msg0, msg1)
+	SHA256_ROUND_ARM(3,  msg3, msg3, msg0, msg1, msg2)
+	SHA256_ROUND_ARM(4,  msg0, msg0, msg1, msg2, msg3)
+	SHA256_ROUND_ARM(5,  msg1, msg1, msg2, msg3, msg0)
+	SHA256_ROUND_ARM(6,  msg2, msg2, msg3, msg0, msg1)
+	SHA256_ROUND_ARM(7,  msg3, msg3, msg0, msg1, msg2)
+	SHA256_ROUND_ARM(8,  msg0, msg0, msg1, msg2, msg3)
+	SHA256_ROUND_ARM(9,  msg1, msg1, msg2, msg3, msg0)
+	SHA256_ROUND_ARM(10, msg2, msg2, msg3, msg0, msg1)
+	SHA256_ROUND_ARM(11, msg3, msg3, msg0, msg1, msg2)
+	SHA256_ROUND_ARM(12, msg0, msg0, msg1, msg2, msg3)
+	SHA256_ROUND_ARM(13, msg1, msg1, msg2, msg3, msg0)
+	SHA256_ROUND_ARM(14, msg2, msg2, msg3, msg0, msg1)
+	SHA256_ROUND_ARM(15, msg3, msg3, msg0, msg1, msg2)
+
+	#undef SHA256_ROUND_ARM
+
+	state0 = vaddq_u32(state0, state0_save);
+	state1 = vaddq_u32(state1, state1_save);
+
+	vst1q_u32(&state[0], state0);
+	vst1q_u32(&state[4], state1);
+}
+
+#endif // CHDLITE_ARM_SHA
 
 } // anonymous namespace
 
@@ -189,6 +800,17 @@ void sha1_creator::reset() noexcept
 
 void sha1_creator::append(const void *data, uint32_t length) noexcept
 {
+// Select the best sha1_process implementation at compile/run time
+#if defined(CHDLITE_ARM_SHA)
+	#define SHA1_PROCESS(st, buf) sha1_process_arm(st, buf)
+#elif defined(CHDLITE_X86_SHA)
+	#define SHA1_PROCESS(st, buf) sha1_process_x86(st, buf)
+#elif defined(CHDLITE_X86_SHA_DISPATCH)
+	#define SHA1_PROCESS(st, buf) do { if (s_has_sha_ni) sha1_process_x86(st, buf); else sha1_process(st, buf); } while(0)
+#else
+	#define SHA1_PROCESS(st, buf) sha1_process(st, buf)
+#endif
+
 #ifdef LSB_FIRST
 	constexpr unsigned swizzle = 3U;
 #else
@@ -203,18 +825,20 @@ void sha1_creator::append(const void *data, uint32_t length) noexcept
 		{
 			for (offset = 0U; (offset + residual) < 64U; offset++)
 				reinterpret_cast<uint8_t *>(m_buf)[(offset + residual) ^ swizzle] = reinterpret_cast<const uint8_t *>(data)[offset];
-			sha1_process(m_st, m_buf);
+			SHA1_PROCESS(m_st, m_buf);
 		}
 		while ((length - offset) >= 64U)
 		{
 			for (residual = 0U; residual < 64U; residual++, offset++)
 				reinterpret_cast<uint8_t *>(m_buf)[residual ^ swizzle] = reinterpret_cast<const uint8_t *>(data)[offset];
-			sha1_process(m_st, m_buf);
+			SHA1_PROCESS(m_st, m_buf);
 		}
 		residual = 0U;
 	}
 	for ( ; offset < length; residual++, offset++)
 		reinterpret_cast<uint8_t *>(m_buf)[residual ^ swizzle] = reinterpret_cast<const uint8_t *>(data)[offset];
+
+#undef SHA1_PROCESS
 }
 
 
@@ -642,6 +1266,23 @@ void sha256_transform(uint32_t state[8], const uint8_t block[64]) noexcept
 
 } // anonymous namespace
 
+// SHA256 transform dispatch
+static inline void sha256_transform_dispatch(uint32_t state[8], const uint8_t block[64]) noexcept
+{
+#if defined(CHDLITE_ARM_SHA)
+	sha256_transform_arm(state, block);
+#elif defined(CHDLITE_X86_SHA)
+	sha256_transform_x86(state, block);
+#elif defined(CHDLITE_X86_SHA_DISPATCH)
+	if (s_has_sha_ni)
+		sha256_transform_x86(state, block);
+	else
+		sha256_transform(state, block);
+#else
+	sha256_transform(state, block);
+#endif
+}
+
 void sha256_creator::reset() noexcept
 {
 	m_cnt = 0;
@@ -667,7 +1308,7 @@ void sha256_creator::append(const void *data, uint32_t length) noexcept
 
 		if (idx == 64)
 		{
-			sha256_transform(m_state, m_buf);
+			sha256_transform_dispatch(m_state, m_buf);
 			idx = 0;
 		}
 	}
@@ -683,7 +1324,7 @@ sha256_t sha256_creator::finish() noexcept
 	if (idx > 56)
 	{
 		memset(m_buf + idx, 0, 64 - idx);
-		sha256_transform(m_state, m_buf);
+		sha256_transform_dispatch(m_state, m_buf);
 		idx = 0;
 	}
 	memset(m_buf + idx, 0, 56 - idx);
@@ -692,7 +1333,7 @@ sha256_t sha256_creator::finish() noexcept
 	for (int i = 0; i < 8; i++)
 		m_buf[56 + i] = uint8_t(bits >> (56 - 8 * i));
 
-	sha256_transform(m_state, m_buf);
+	sha256_transform_dispatch(m_state, m_buf);
 
 	sha256_t result;
 	for (int i = 0; i < 8; i++)

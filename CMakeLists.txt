@@ -41,6 +41,25 @@ else()
     add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 endif()
 
+# =====================================================================
+# Architecture-specific SIMD compile flags
+# =====================================================================
+# x86-64: AVX2 baseline (Intel Haswell 2013+ / AMD Excavator 2015+)
+# ARM64:  NEON always available; crypto extensions on most modern SoCs
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|x86-64")
+    if(MSVC)
+        add_compile_options(/arch:AVX2)
+    else()
+        add_compile_options(-mavx2 -msse4.2 -mssse3)
+    endif()
+    add_compile_definitions(CHDLITE_X86_SIMD=1)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+    # Apple Silicon and most modern ARM64 enable crypto extensions by default.
+    # On Linux arm64 toolchains that don't, uncomment:
+    #   add_compile_options(-march=armv8-a+crypto)
+    add_compile_definitions(CHDLITE_ARM64_SIMD=1)
+endif()
+
 # Find external libraries
 find_package(ZLIB REQUIRED)
 find_package(zstd CONFIG REQUIRED)

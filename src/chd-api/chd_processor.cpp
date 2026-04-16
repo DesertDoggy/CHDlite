@@ -11,6 +11,10 @@
 #include <cstring>
 #include <vector>
 
+#if defined(__aarch64__) || defined(_M_ARM64)
+#include <arm_neon.h>
+#endif
+
 namespace chdlite {
 
 // ======================> Helpers (content type detection)
@@ -110,8 +114,19 @@ static ChdProcessor::Result process_cd(chd_file& chd,
             if (swap_audio)
             {
                 uint32_t dsz = toc.tracks[trk].datasize;
-                for (uint32_t i = 0; i < dsz - 1; i += 2)
-                    std::swap(sector_buf[i], sector_buf[i + 1]);
+                uint8_t *buf = sector_buf.data();
+                uint32_t i = 0;
+#if defined(__aarch64__) || defined(_M_ARM64)
+                // NEON byte-swap: vrev16q_u8 swaps adjacent bytes in 16-byte chunks
+                for (; i + 15 < dsz; i += 16)
+                {
+                    uint8x16_t v = vld1q_u8(buf + i);
+                    vst1q_u8(buf + i, vrev16q_u8(v));
+                }
+#endif
+                // Scalar tail (or full loop on x86 — compiler auto-vectorizes with -mavx2)
+                for (; i < dsz - 1; i += 2)
+                    std::swap(buf[i], buf[i + 1]);
             }
 
             uint32_t data_len = toc.tracks[trk].datasize;

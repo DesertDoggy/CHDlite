@@ -93,8 +93,9 @@ public:
     void on_begin(ContentType type, uint32_t num_tracks) override
     {
         m_num_tracks = num_tracks;
+        // Use \r\n line endings to match chdman output (cue/gdi are always CRLF)
         if (m_gdi_mode)
-            m_meta << num_tracks << "\n";
+            m_meta << num_tracks << "\r\n";
     }
 
     void on_track_begin(uint32_t track_num, TrackType track_type,
@@ -197,18 +198,18 @@ public:
                    << gdi_type << " "
                    << m_cur_datasize << " "
                    << "\"" << m_cur_bin_name << "\" "
-                   << 0 << "\n";
+                   << 0 << "\r\n";
             m_cur_logframeofs += m_cur_toc_frames;
         }
         else
         {
             // In single-bin mode, only emit FILE once (first track)
             if (m_split_bin || m_cur_track == 1)
-                m_meta << "FILE \"" << m_cur_bin_name << "\" BINARY\n";
+                m_meta << "FILE \"" << m_cur_bin_name << "\" BINARY\r\n";
             char tnum[8];
             std::snprintf(tnum, sizeof(tnum), "%02u", m_cur_track);
             m_meta << "  TRACK " << tnum << " "
-                   << cue_track_type_string(m_cur_type, m_cur_datasize) << "\n";
+                   << cue_track_type_string(m_cur_type, m_cur_datasize) << "\r\n";
 
             // For single-bin: INDEX offsets are cumulative frames from start of file
             // For split-bin: each file starts at offset 0
@@ -217,20 +218,20 @@ public:
 
             if (m_cur_pregap > 0 && m_cur_pgdatasize == 0)
             {
-                m_meta << "    PREGAP " << msf_from_frames(m_cur_pregap) << "\n";
-                m_meta << "    INDEX 01 " << msf_from_frames(base_frames) << "\n";
+                m_meta << "    PREGAP " << msf_from_frames(m_cur_pregap) << "\r\n";
+                m_meta << "    INDEX 01 " << msf_from_frames(base_frames) << "\r\n";
             }
             else if (m_cur_pregap > 0 && m_cur_pgdatasize > 0)
             {
-                m_meta << "    INDEX 00 " << msf_from_frames(base_frames) << "\n";
-                m_meta << "    INDEX 01 " << msf_from_frames(base_frames + m_cur_pregap) << "\n";
+                m_meta << "    INDEX 00 " << msf_from_frames(base_frames) << "\r\n";
+                m_meta << "    INDEX 01 " << msf_from_frames(base_frames + m_cur_pregap) << "\r\n";
             }
             else
             {
-                m_meta << "    INDEX 01 " << msf_from_frames(base_frames) << "\n";
+                m_meta << "    INDEX 01 " << msf_from_frames(base_frames) << "\r\n";
             }
             if (m_cur_postgap > 0)
-                m_meta << "    POSTGAP " << msf_from_frames(m_cur_postgap) << "\n";
+                m_meta << "    POSTGAP " << msf_from_frames(m_cur_postgap) << "\r\n";
         }
     }
 
@@ -408,9 +409,9 @@ ExtractionResult ChdExtractor::extract_impl(const std::string& chd_path,
             return result;
         }
 
-        // Write metadata file
+        // Write metadata file (binary mode to preserve explicit \r\n)
         {
-            std::ofstream meta_out(meta_path);
+            std::ofstream meta_out(meta_path, std::ios::binary);
             if (!meta_out)
             {
                 if (m_strict)

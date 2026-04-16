@@ -319,10 +319,27 @@ ChdExtractor& ChdExtractor::operator=(ChdExtractor&&) noexcept = default;
 ExtractionResult ChdExtractor::extract(const std::string& chd_path,
                                        const ExtractOptions& options)
 {
-    return extract(chd_path, options.parent_chd_path, options);
+    auto result = extract_impl(chd_path, options.parent_chd_path, options);
+    if (!result.success) {
+        if (options.log_callback) options.log_callback(LogLevel::Error, result.error_message);
+        if (m_throw_on_error) throw ChdException(result.error_message);
+    }
+    return result;
 }
 
 ExtractionResult ChdExtractor::extract(const std::string& chd_path,
+                                       const std::string& parent_chd_path,
+                                       const ExtractOptions& options)
+{
+    auto result = extract_impl(chd_path, parent_chd_path, options);
+    if (!result.success) {
+        if (options.log_callback) options.log_callback(LogLevel::Error, result.error_message);
+        if (m_throw_on_error) throw ChdException(result.error_message);
+    }
+    return result;
+}
+
+ExtractionResult ChdExtractor::extract_impl(const std::string& chd_path,
                                        const std::string& parent_chd_path,
                                        const ExtractOptions& options)
 {

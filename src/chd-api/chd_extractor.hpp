@@ -32,9 +32,18 @@ public:
                              const std::string& parent_chd_path,
                              const ExtractOptions& options = {});
 
+    /// When enabled, failed operations throw ChdException instead of returning success=false.
+    void set_throw_on_error(bool v) noexcept { m_throw_on_error = v; }
+    bool throw_on_error() const noexcept { return m_throw_on_error; }
+
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;
+    bool m_throw_on_error = true;
+
+    ExtractionResult extract_impl(const std::string& chd_path,
+                                  const std::string& parent_chd_path,
+                                  const ExtractOptions& options);
 };
 
 } // namespace chdlite

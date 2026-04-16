@@ -230,7 +230,7 @@ public:
                     m_lastfile = m_info.track[tracknum].fname;
                     std::error_condition filerr = util::core_file::open(m_lastfile, OPEN_FLAG_READ, m_file);
                     if (filerr)
-                        throw ChdException("Error opening input file: " + m_lastfile);
+                        throw ChdInputException("Cannot open track file '" + m_lastfile + "': " + filerr.message());
                 }
 
                 uint64_t bytesperframe = trackinfo.datasize + trackinfo.subsize;
@@ -254,7 +254,7 @@ public:
                         m_lastfile = m_info.track[tracknum + 1].fname;
                         std::error_condition filerr = util::core_file::open(m_lastfile, OPEN_FLAG_READ, m_file);
                         if (filerr)
-                            throw ChdException("Error opening input file: " + m_lastfile);
+                            throw ChdInputException("Cannot open split track file '" + m_lastfile + "': " + filerr.message());
                     }
 
                     if (src_frame_start < src_track_end)
@@ -274,7 +274,7 @@ public:
                             if (!err)
                                 std::tie(err, count) = read(*m_file, dest, bytesperframe);
                             if (err || count != bytesperframe)
-                                throw ChdException("Error reading input file: " + m_lastfile);
+                                throw ChdInputException("Read error in track file '" + m_lastfile + "': unexpected end of data");
                         }
 
                         // byte-swap audio data if needed
@@ -323,12 +323,12 @@ struct ChdArchiver::Impl
             {
                 uint64_t done = static_cast<uint64_t>(complete * logical_bytes);
                 if (!options.progress_callback(done, logical_bytes))
-                    throw ChdException("Archive cancelled by user");
+                    throw ChdCancelledException("Archive cancelled by user");
             }
         }
 
         if (err)
-            throw ChdException("Compression error: " + err.message());
+            throw ChdCompressionException("Compression failed: " + err.message());
 
         result.compression_ratio = ratio;
     }
@@ -389,13 +389,13 @@ ArchiveResult ChdArchiver::archive_raw(const std::string& input_path,
         util::core_file::ptr input_file;
         std::error_condition filerr = util::core_file::open(input_path, OPEN_FLAG_READ, input_file);
         if (filerr)
-            throw ChdException("Cannot open input file: " + input_path + " (" + filerr.message() + ")");
+            throw ChdInputException("Cannot open input file '" + input_path + "': " + filerr.message());
 
         // Get input file size
         uint64_t input_size = 0;
         input_file->length(input_size);
         if (input_size == 0)
-            throw ChdException("Input file is empty: " + input_path);
+            throw ChdInputException("Input file is empty: '" + input_path + "'");
 
         result.input_bytes = input_size;
 
@@ -418,7 +418,7 @@ ArchiveResult ChdArchiver::archive_raw(const std::string& input_path,
         {
             std::error_condition perr = parent.open(options.parent_chd_path);
             if (perr)
-                throw ChdException("Cannot open parent CHD: " + options.parent_chd_path);
+                throw ChdParentException("Cannot open parent CHD '" + options.parent_chd_path + "': " + perr.message());
             unit_size = parent.unit_bytes();
         }
 
@@ -431,7 +431,7 @@ ArchiveResult ChdArchiver::archive_raw(const std::string& input_path,
         else
             cerr = chd->create(output_path, input_size, hunk_size, unit_size, compression);
         if (cerr)
-            throw ChdException("Cannot create output CHD: " + output_path + " (" + cerr.message() + ")");
+            throw ChdOutputException("Cannot create output CHD '" + output_path + "': " + cerr.message());
 
         // Clone metadata from parent if applicable
         if (parent.opened())
@@ -449,11 +449,15 @@ ArchiveResult ChdArchiver::archive_raw(const std::string& input_path,
     }
     catch (const ChdException& e)
     {
+        if (options.log_callback) options.log_callback(e.severity(), e.what());
+        if (m_throw_on_error) throw;
         result.success = false;
         result.error_message = e.what();
     }
     catch (const std::exception& e)
     {
+        if (options.log_callback) options.log_callback(LogLevel::Error, e.what());
+        if (m_throw_on_error) throw;
         result.success = false;
         result.error_message = e.what();
     }
@@ -479,10 +483,10 @@ ArchiveResult ChdArchiver::archive_cd(const std::string& input_path,
 
         std::error_condition parse_err = cdrom_file::parse_toc(input_path, toc, track_info);
         if (parse_err)
-            throw ChdException("Error parsing input: " + input_path + " (" + parse_err.message() + ")");
+            throw ChdInputException("Failed to parse TOC from '" + input_path + "': " + parse_err.message());
 
         if (toc.numtrks == 0)
-            throw ChdException("No tracks found in input: " + input_path);
+            throw ChdInputException("No tracks found in '" + input_path + "' — file may be empty or unsupported");
 
         // Pad each track to 4-frame boundary (same as chdman)
         uint32_t total_sectors = 0;
@@ -511,7 +515,7 @@ ArchiveResult ChdArchiver::archive_cd(const std::string& input_path,
         {
             std::error_condition perr = parent.open(options.parent_chd_path);
             if (perr)
-                throw ChdException("Cannot open parent CHD: " + options.parent_chd_path);
+                throw ChdParentException("Cannot open parent CHD '" + options.parent_chd_path + "': " + perr.message());
         }
 
         // Create CD compressor
@@ -523,12 +527,12 @@ ArchiveResult ChdArchiver::archive_cd(const std::string& input_path,
         else
             cerr = chd->create(output_path, logical_size, hunk_size, cdrom_file::FRAME_SIZE, compression);
         if (cerr)
-            throw ChdException("Cannot create output CHD: " + output_path + " (" + cerr.message() + ")");
+            throw ChdOutputException("Cannot create output CHD '" + output_path + "': " + cerr.message());
 
         // Write CD metadata (track types, sizes, etc.)
         std::error_condition merr = cdrom_file::write_metadata(chd.get(), toc);
         if (merr)
-            throw ChdException("Error writing CD metadata: " + merr.message());
+            throw ChdMetadataException("Failed to write CD track metadata to '" + output_path + "': " + merr.message());
 
         // Compress
         Impl::compress_with_progress(*chd, options, logical_size, result);
@@ -542,11 +546,15 @@ ArchiveResult ChdArchiver::archive_cd(const std::string& input_path,
     }
     catch (const ChdException& e)
     {
+        if (options.log_callback) options.log_callback(e.severity(), e.what());
+        if (m_throw_on_error) throw;
         result.success = false;
         result.error_message = e.what();
     }
     catch (const std::exception& e)
     {
+        if (options.log_callback) options.log_callback(LogLevel::Error, e.what());
+        if (m_throw_on_error) throw;
         result.success = false;
         result.error_message = e.what();
     }
@@ -570,16 +578,16 @@ ArchiveResult ChdArchiver::archive_dvd(const std::string& input_path,
         util::core_file::ptr input_file;
         std::error_condition filerr = util::core_file::open(input_path, OPEN_FLAG_READ, input_file);
         if (filerr)
-            throw ChdException("Cannot open input file: " + input_path + " (" + filerr.message() + ")");
+            throw ChdInputException("Cannot open input file '" + input_path + "': " + filerr.message());
 
         uint64_t input_size = 0;
         input_file->length(input_size);
         if (input_size == 0)
-            throw ChdException("Input file is empty: " + input_path);
+            throw ChdInputException("Input file is empty: '" + input_path + "'");
 
         // DVD sector size is 2048
         if (input_size % 2048 != 0)
-            throw ChdException("DVD ISO size is not a multiple of 2048 bytes");
+            throw ChdInputException("DVD ISO '" + input_path + "' size (" + std::to_string(input_size) + " bytes) is not a multiple of 2048");
 
         result.input_bytes = input_size;
 
@@ -596,7 +604,7 @@ ArchiveResult ChdArchiver::archive_dvd(const std::string& input_path,
         {
             std::error_condition perr = parent.open(options.parent_chd_path);
             if (perr)
-                throw ChdException("Cannot open parent CHD: " + options.parent_chd_path);
+                throw ChdParentException("Cannot open parent CHD '" + options.parent_chd_path + "': " + perr.message());
         }
 
         // Create compressor
@@ -608,12 +616,12 @@ ArchiveResult ChdArchiver::archive_dvd(const std::string& input_path,
         else
             cerr = chd->create(output_path, input_size, hunk_size, 2048, compression);
         if (cerr)
-            throw ChdException("Cannot create output CHD: " + output_path + " (" + cerr.message() + ")");
+            throw ChdOutputException("Cannot create output CHD '" + output_path + "': " + cerr.message());
 
         // Write DVD metadata tag
         std::error_condition merr = chd->write_metadata(DVD_METADATA_TAG, 0, "");
         if (merr)
-            throw ChdException("Error writing DVD metadata: " + merr.message());
+            throw ChdMetadataException("Failed to write DVD metadata tag to '" + output_path + "': " + merr.message());
 
         // Compress
         Impl::compress_with_progress(*chd, options, input_size, result);
@@ -627,11 +635,15 @@ ArchiveResult ChdArchiver::archive_dvd(const std::string& input_path,
     }
     catch (const ChdException& e)
     {
+        if (options.log_callback) options.log_callback(e.severity(), e.what());
+        if (m_throw_on_error) throw;
         result.success = false;
         result.error_message = e.what();
     }
     catch (const std::exception& e)
     {
+        if (options.log_callback) options.log_callback(LogLevel::Error, e.what());
+        if (m_throw_on_error) throw;
         result.success = false;
         result.error_message = e.what();
     }
@@ -742,6 +754,34 @@ ArchiveResult ChdArchiver::archive(const std::string& input_path,
     result.detected_manufacturer_id  = detection.manufacturer_id;
     result.detected_format_source    = detection.format_source;
     result.detected_platform_source  = detection.platform_source;
+
+    // Emit detection summary at Debug level if a log callback is installed
+    if (options.log_callback) {
+        auto fs_name = [](FormatSource s) -> const char* {
+            switch (s) {
+            case FormatSource::Extension:   return "extension";
+            case FormatSource::SyncBytes:   return "sync-bytes (raw CD sectors)";
+            case FormatSource::DvdMatch:    return "dvd-match (platform identified)";
+            case FormatSource::DvdFallback: return "dvd-fallback (no specific match)";
+            case FormatSource::CdOverride:  return "cd-override (CD platform beat DVD fallback)";
+            default:                        return "unknown";
+            }
+        };
+        auto ps_name = [](PlatformSource s) -> const char* {
+            switch (s) {
+            case PlatformSource::Sector0:   return "sector-0 magic";
+            case PlatformSource::Iso9660:   return "ISO 9660 filesystem";
+            case PlatformSource::Heuristic: return "heuristic";
+            case PlatformSource::Default:   return "default (no match)";
+            default:                        return "unknown";
+            }
+        };
+        std::string msg = std::string("detect: format-source=") + fs_name(detection.format_source);
+        if (detection.game_platform != GamePlatform::Unknown)
+            msg += std::string(" platform=") + game_platform_name(detection.game_platform)
+                 + " platform-source=" + ps_name(detection.platform_source);
+        options.log_callback(LogLevel::Debug, msg);
+    }
 
     // Rename output to title or game ID if requested and successful
     std::string rename_label;

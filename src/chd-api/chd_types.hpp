@@ -12,6 +12,22 @@
 
 namespace chdlite {
 
+// ======================> Log level (shared across library and CLI)
+
+enum class LogLevel
+{
+    Debug    = 0,
+    Info     = 1,
+    Warning  = 2,
+    Error    = 3,
+    Critical = 4,
+    None     = 5,
+};
+
+// Callback signature for library-level log messages.
+// Modules call this (if set) instead of writing to stderr/files directly.
+using LogCallback = std::function<void(LogLevel, const std::string&)>;
+
 // ======================> Content type detected from CHD metadata
 
 enum class ContentType
@@ -276,6 +292,9 @@ struct ExtractOptions
 
     // Progress callback: (bytes_processed, total_bytes) → return false to cancel
     std::function<bool(uint64_t, uint64_t)> progress_callback;
+
+    // Log callback — called with Error messages on failure.
+    LogCallback log_callback;
 };
 
 // ======================> CUE fix modes (bitmask for future expansion)
@@ -320,6 +339,10 @@ struct ArchiveOptions
     // Progress callback
     std::function<bool(uint64_t, uint64_t)> progress_callback;
 
+    // Log callback — called with Debug/Info/Warning/Error/Critical messages from the library.
+    // If null, library is silent (the CLI installs its own handler).
+    LogCallback log_callback;
+
     // Helper: true if user specified no codecs at all (use smart defaults)
     bool has_custom_compression() const {
         if (codec != Codec::None) return true;
@@ -329,15 +352,68 @@ struct ArchiveOptions
     }
 };
 
-// ======================> Exception
+// ======================> Exception hierarchy
+//
+//  ChdException               — base; catch-all for any CHD operation failure
+//  ├─ ChdInputException       — bad/missing/unreadable input file or track data
+//  ├─ ChdParentException      — parent CHD cannot be opened
+//  ├─ ChdOutputException      — output CHD cannot be created (permissions, disk full, etc.)
+//  ├─ ChdMetadataException    — CHD created but metadata write failed (partially written)
+//  ├─ ChdCompressionException — MAME codec failure mid-compression (Critical severity)
+//  └─ ChdCancelledException   — progress callback returned false (Info severity)
 
 class ChdException : public std::exception
 {
 public:
-    explicit ChdException(std::string message) : m_message(std::move(message)) {}
+    explicit ChdException(std::string message, LogLevel severity = LogLevel::Error)
+        : m_message(std::move(message)), m_severity(severity) {}
     const char* what() const noexcept override { return m_message.c_str(); }
+    LogLevel severity() const noexcept { return m_severity; }
 private:
     std::string m_message;
+    LogLevel    m_severity;
+};
+
+class ChdInputException : public ChdException
+{
+public:
+    explicit ChdInputException(std::string message)
+        : ChdException(std::move(message), LogLevel::Error) {}
+};
+
+class ChdParentException : public ChdException
+{
+public:
+    explicit ChdParentException(std::string message)
+        : ChdException(std::move(message), LogLevel::Error) {}
+};
+
+class ChdOutputException : public ChdException
+{
+public:
+    explicit ChdOutputException(std::string message)
+        : ChdException(std::move(message), LogLevel::Error) {}
+};
+
+class ChdMetadataException : public ChdException
+{
+public:
+    explicit ChdMetadataException(std::string message)
+        : ChdException(std::move(message), LogLevel::Error) {}
+};
+
+class ChdCompressionException : public ChdException
+{
+public:
+    explicit ChdCompressionException(std::string message)
+        : ChdException(std::move(message), LogLevel::Critical) {}
+};
+
+class ChdCancelledException : public ChdException
+{
+public:
+    explicit ChdCancelledException(std::string message = "Operation cancelled by user")
+        : ChdException(std::move(message), LogLevel::Info) {}
 };
 
 } // namespace chdlite

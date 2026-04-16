@@ -46,6 +46,7 @@ find_package(ZLIB REQUIRED)
 find_package(zstd CONFIG REQUIRED)
 find_package(FLAC CONFIG REQUIRED)
 find_package(xxHash CONFIG REQUIRED)
+find_package(spdlog CONFIG REQUIRED)
 
 # utf8proc
 find_package(utf8proc CONFIG REQUIRED)
@@ -286,7 +287,7 @@ add_executable(cli_test tests/cli_test.cpp)
 
 # CLI tool
 add_executable(chdlite_cli src/cli/chdlite_cli.cpp)
-target_link_libraries(chdlite_cli PRIVATE chdlite)
+target_link_libraries(chdlite_cli PRIVATE chdlite spdlog::spdlog)
 set_target_properties(chdlite_cli PROPERTIES OUTPUT_NAME chdlite)
 
 # Create chdread / chdhash aliases (symlinks on Unix, copies on Windows)

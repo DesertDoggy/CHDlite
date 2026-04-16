@@ -8,6 +8,7 @@
     "zstd",
     "libflac",
     "utf8proc",
-    "xxhash"
+    "xxhash",
+    "spdlog"
   ]
 }

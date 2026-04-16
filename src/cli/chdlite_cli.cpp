@@ -34,6 +34,9 @@
 #include <string>
 #include <vector>
 
+#include <spdlog/spdlog.h>
+#include <spdlog/sinks/basic_file_sink.h>
+
 namespace fs = std::filesystem;
 using namespace chdlite;
 
@@ -42,16 +45,15 @@ using namespace chdlite;
 // Records: timestamp, version, full command line, status (OK or error).
 // Default level per release phase:  alpha=info  beta=error  release=none
 // Override with -log debug|info|warning|error|critical|none
-
-enum class LogLevel { Debug = 0, Info = 1, Warning = 2, Error = 3, Critical = 4, None = 5 };
+// LogLevel is defined in chdlite::chd_types.hpp and shared with the library.
 
 static constexpr LogLevel LOG_DEFAULT = LogLevel::Info;  // ← change per phase
 
-static LogLevel     g_log_level = LOG_DEFAULT;
-static std::string  g_cmdline;
-static std::string  g_input_file;
-static std::string  g_log_path;
-static fs::path     g_logs_dir;   // <exe_root>/logs/  (populated by init_log)
+static LogLevel      g_log_level = LOG_DEFAULT;
+static std::string   g_cmdline;
+static std::string   g_input_file;
+static std::shared_ptr<spdlog::logger> g_logger;
+static fs::path g_logs_dir;  // set by init_log / --log-dir, used for hash output default
 
 static void init_log(int argc, char** argv)
 {
@@ -59,7 +61,6 @@ static void init_log(int argc, char** argv)
     for (int i = 0; i < argc; i++)
     {
         if (i > 0) g_cmdline += ' ';
-        // Quote args with spaces
         std::string a = argv[i];
         if (a.find(' ') != std::string::npos)
             g_cmdline += '"' + a + '"';
@@ -67,42 +68,50 @@ static void init_log(int argc, char** argv)
             g_cmdline += a;
     }
 
-    // Resolve <exe_root>/logs/ — create it if absent; fall back to ./logs/
+    // Resolve <exe_root>/logs/chdlite.log
     std::error_code ec;
     fs::path exe_dir = fs::canonical(fs::path(argv[0]).parent_path(), ec);
     g_logs_dir = (ec || exe_dir.empty()) ? fs::path("logs") : exe_dir / "logs";
-    fs::create_directories(g_logs_dir, ec);  // silently ignore "already exists" etc.
+    fs::create_directories(g_logs_dir, ec);
+    std::string log_path = (g_logs_dir / "chdlite.log").string();
 
-    g_log_path = (g_logs_dir / "chdlite.log").string();
+    auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_path, false /*append*/);
+    g_logger = std::make_shared<spdlog::logger>("chdlite", file_sink);
+    g_logger->set_pattern("[%Y-%m-%d %H:%M:%S] [%l] %v");
+    g_logger->set_level(spdlog::level::trace);  // gate via g_log_level below
+    g_logger->flush_on(spdlog::level::debug);
 }
 
-static void log_entry(LogLevel level, const std::string& status)
+// Map chdlite::LogLevel → spdlog level and forward if at/above threshold.
+static void log_entry(LogLevel level, const std::string& msg)
 {
-    if (g_log_level == LogLevel::None) return;
-    if (level < g_log_level) return;
+    if (g_log_level == LogLevel::None || level < g_log_level) return;
+    if (!g_logger) return;
 
-    std::time_t now = std::time(nullptr);
-    char timebuf[64];
-    std::strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
-
-    std::ofstream log(g_log_path, std::ios::app);
-    if (!log.is_open()) return;
-
-    log << "---\n";
-    log << "Time:    " << timebuf << "\n";
-    log << "Version: " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_PATCH << "\n";
-    log << "Command: " << g_cmdline << "\n";
+    // Prefix with context fields on first call per entry
+    std::string entry = msg;
+    if (!g_cmdline.empty())
+        entry = "cmd=" + g_cmdline + " | " + entry;
     if (!g_input_file.empty())
-        log << "Input:   " << g_input_file << "\n";
-    log << "Status:  " << status << "\n";
-    log << std::endl;
+        entry = "input=" + g_input_file + " | " + entry;
+    entry = "v" + std::to_string(VERSION_MAJOR) + "." + std::to_string(VERSION_MINOR)
+          + "." + std::to_string(VERSION_PATCH) + " | " + entry;
+
+    switch (level) {
+    case LogLevel::Debug:    g_logger->debug   (entry); break;
+    case LogLevel::Info:     g_logger->info    (entry); break;
+    case LogLevel::Warning:  g_logger->warn    (entry); break;
+    case LogLevel::Error:    g_logger->error   (entry); break;
+    case LogLevel::Critical: g_logger->critical(entry); break;
+    default: break;
+    }
 }
 
-static void log_debug(const std::string& msg)    { log_entry(LogLevel::Debug,    "DEBUG: "    + msg); }
+static void log_debug(const std::string& msg)    { log_entry(LogLevel::Debug,    msg); }
 static void log_info(const std::string& msg)     { log_entry(LogLevel::Info,     msg); }
-static void log_warning(const std::string& msg)  { log_entry(LogLevel::Warning,  "WARNING: "  + msg); }
-static void log_error(const std::string& msg)    { log_entry(LogLevel::Error,    "ERROR: "    + msg); }
-static void log_critical(const std::string& msg) { log_entry(LogLevel::Critical, "CRITICAL: " + msg); }
+static void log_warning(const std::string& msg)  { log_entry(LogLevel::Warning,  msg); }
+static void log_error(const std::string& msg)    { log_entry(LogLevel::Error,    msg); }
+static void log_critical(const std::string& msg) { log_entry(LogLevel::Critical, msg); }
 
 static const char* format_source_name(FormatSource s)
 {
@@ -865,7 +874,8 @@ static int cmd_create(const Args& args)
     // Progress callback
     opts.progress_callback = make_progress("Compressing");
 
-    // Print header info
+    // Library log callback — forwards Debug+ messages to the CLI log
+    opts.log_callback = [](LogLevel lvl, const std::string& msg) { log_entry(lvl, msg); };
     std::printf("Output CHD:   %s\n", output.c_str());
     std::printf("Input file:   %s\n", args.input.c_str());
     if (!args.input_parent.empty())
@@ -898,13 +908,6 @@ static int cmd_create(const Args& args)
         std::printf("Manufacturer ID: %s\n", result.detected_manufacturer_id.c_str());
     std::printf("Compression complete\n");
 
-    {
-        std::string dbg = std::string("format-source=") + format_source_name(result.detected_format_source);
-        if (result.detected_game_platform != GamePlatform::Unknown)
-            dbg += std::string(" platform=") + game_platform_name(result.detected_game_platform)
-                 + " platform-source=" + platform_source_name(result.detected_platform_source);
-        log_debug("detect: " + dbg);
-    }
     log_info("create OK: " + std::to_string(result.output_bytes) + " bytes");
     return 0;
 }
@@ -1165,7 +1168,13 @@ int main(int argc, char** argv)
         std::error_code ec;
         g_logs_dir = fs::path(args.log_dir);
         fs::create_directories(g_logs_dir, ec);
-        g_log_path = (g_logs_dir / "chdlite.log").string();
+        // Reinitialise spdlog sink with new path
+        std::string new_path = (g_logs_dir / "chdlite.log").string();
+        auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(new_path, false);
+        g_logger = std::make_shared<spdlog::logger>("chdlite", sink);
+        g_logger->set_pattern("[%Y-%m-%d %H:%M:%S] [%l] %v");
+        g_logger->set_level(spdlog::level::trace);
+        g_logger->flush_on(spdlog::level::debug);
     }
 
     // Set log level from -log option
@@ -1282,11 +1291,17 @@ int main(int argc, char** argv)
         print_usage();
         return 1;
     }
+    catch (const ChdCancelledException& e)
+    {
+        std::fprintf(stderr, "Cancelled: %s\n", e.what());
+        log_entry(LogLevel::Info, std::string("cancelled: ") + e.what());
+        return 2;
+    }
     catch (const ChdException& e)
     {
         std::string err = std::string("CHD exception: ") + e.what();
         std::fprintf(stderr, "%s\n", err.c_str());
-        log_error(err);
+        log_entry(e.severity(), err);
         return 1;
     }
     catch (const std::exception& e)

@@ -43,14 +43,17 @@ public:
                           const std::string& output_path,
                           const ArchiveOptions& options = {});
 
-    /// When enabled, failed operations throw ChdException instead of returning success=false.
-    void set_throw_on_error(bool v) noexcept { m_throw_on_error = v; }
-    bool throw_on_error() const noexcept { return m_throw_on_error; }
+    /// Strict input validation (default: true).
+    /// When enabled, a 2048-byte ISO that produces conflicting CD and DVD platform
+    /// detections throws ChdFormatException instead of proceeding with a best-guess format.
+    /// Disable to allow forced conversion of irregular or irregular dumps.
+    void set_strict(bool v) noexcept { m_strict = v; }
+    bool strict() const noexcept { return m_strict; }
 
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;
-    bool m_throw_on_error = true;
+    bool m_strict = true;
 };
 
 } // namespace chdlite

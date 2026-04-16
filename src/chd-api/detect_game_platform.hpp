@@ -42,6 +42,10 @@ struct DetectionResult
     std::string     format;           // "cd", "dvd", or "raw" (used by detect_input)
     FormatSource    format_source    = FormatSource::Unknown;    // how format was determined
     PlatformSource  platform_source  = PlatformSource::Unknown; // how platform was identified
+    // Set when both CD-specific and DVD-specific platforms were detected from a 2048-byte image.
+    // In strict mode the archiver will throw ChdFormatException instead of guessing.
+    bool            format_conflict  = false;
+    std::string     format_conflict_detail; // human-readable description of the conflict
 };
 
 // Info about the input disc layout (for raw file detection)

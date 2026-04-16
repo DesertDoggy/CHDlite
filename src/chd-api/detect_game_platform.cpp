@@ -1102,6 +1102,14 @@ DetectionResult detect_input(const std::string& input_path, bool detect_title)
             bool cd_specific  = (cd_det.game_platform  != GamePlatform::GenericCD &&
                                  cd_det.game_platform  != GamePlatform::Unknown);
 
+            if (cd_specific && dvd_specific) {
+                // Both paths identified a specific platform — genuine ambiguity.
+                result.format_conflict = true;
+                result.format_conflict_detail =
+                    std::string("CD path matched ") + game_platform_name(cd_det.game_platform) +
+                    ", DVD path matched " + game_platform_name(dvd_det.game_platform);
+            }
+
             if (cd_specific && !dvd_specific) {
                 result.format          = "cd";
                 result.format_source   = FormatSource::CdOverride;

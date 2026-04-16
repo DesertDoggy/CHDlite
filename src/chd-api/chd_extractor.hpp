@@ -32,14 +32,16 @@ public:
                              const std::string& parent_chd_path,
                              const ExtractOptions& options = {});
 
-    /// When enabled, failed operations throw ChdException instead of returning success=false.
-    void set_throw_on_error(bool v) noexcept { m_throw_on_error = v; }
-    bool throw_on_error() const noexcept { return m_throw_on_error; }
+    /// Strict output validation (default: true).
+    /// When enabled, failure to write the .cue/.gdi metadata file throws ChdMetadataException.
+    /// When disabled, extraction succeeds with only the BIN data and a warning is logged.
+    void set_strict(bool v) noexcept { m_strict = v; }
+    bool strict() const noexcept { return m_strict; }
 
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;
-    bool m_throw_on_error = true;
+    bool m_strict = true;
 
     ExtractionResult extract_impl(const std::string& chd_path,
                                   const std::string& parent_chd_path,

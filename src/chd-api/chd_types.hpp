@@ -402,6 +402,15 @@ public:
         : ChdException(std::move(message), LogLevel::Error) {}
 };
 
+// Thrown when the input format is ambiguous or conflicting (strict mode only).
+// e.g. a 2048-byte ISO where both CD-specific and DVD-specific platforms were detected.
+class ChdFormatException : public ChdException
+{
+public:
+    explicit ChdFormatException(std::string message)
+        : ChdException(std::move(message), LogLevel::Warning) {}
+};
+
 class ChdCompressionException : public ChdException
 {
 public:

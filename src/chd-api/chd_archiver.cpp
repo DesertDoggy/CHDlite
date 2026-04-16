@@ -450,16 +450,12 @@ ArchiveResult ChdArchiver::archive_raw(const std::string& input_path,
     catch (const ChdException& e)
     {
         if (options.log_callback) options.log_callback(e.severity(), e.what());
-        if (m_throw_on_error) throw;
-        result.success = false;
-        result.error_message = e.what();
+        throw;
     }
     catch (const std::exception& e)
     {
         if (options.log_callback) options.log_callback(LogLevel::Error, e.what());
-        if (m_throw_on_error) throw;
-        result.success = false;
-        result.error_message = e.what();
+        throw;
     }
 
     return result;
@@ -547,16 +543,12 @@ ArchiveResult ChdArchiver::archive_cd(const std::string& input_path,
     catch (const ChdException& e)
     {
         if (options.log_callback) options.log_callback(e.severity(), e.what());
-        if (m_throw_on_error) throw;
-        result.success = false;
-        result.error_message = e.what();
+        throw;
     }
     catch (const std::exception& e)
     {
         if (options.log_callback) options.log_callback(LogLevel::Error, e.what());
-        if (m_throw_on_error) throw;
-        result.success = false;
-        result.error_message = e.what();
+        throw;
     }
 
     return result;
@@ -636,16 +628,12 @@ ArchiveResult ChdArchiver::archive_dvd(const std::string& input_path,
     catch (const ChdException& e)
     {
         if (options.log_callback) options.log_callback(e.severity(), e.what());
-        if (m_throw_on_error) throw;
-        result.success = false;
-        result.error_message = e.what();
+        throw;
     }
     catch (const std::exception& e)
     {
         if (options.log_callback) options.log_callback(LogLevel::Error, e.what());
-        if (m_throw_on_error) throw;
-        result.success = false;
-        result.error_message = e.what();
+        throw;
     }
 
     return result;
@@ -686,6 +674,13 @@ ArchiveResult ChdArchiver::archive(const std::string& input_path,
     // Run pre-archive detection
     bool need_title = options.detect_title || options.rename_to_title || options.rename_to_gameid;
     DetectionResult detection = detect_input(input_path, need_title);
+
+    // Strict format check: if both CD and DVD platforms were identified, the image is ambiguous.
+    if (m_strict && detection.format_conflict) {
+        throw ChdFormatException(
+            "Ambiguous format in '" + input_path + "': " + detection.format_conflict_detail +
+            " — use set_strict(false) to force conversion with best-guess format");
+    }
 
     // Determine format from explicit option or detection result
     std::string fmt = options.input_format;

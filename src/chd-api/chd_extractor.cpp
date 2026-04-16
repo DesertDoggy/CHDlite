@@ -322,7 +322,7 @@ ExtractionResult ChdExtractor::extract(const std::string& chd_path,
     auto result = extract_impl(chd_path, options.parent_chd_path, options);
     if (!result.success) {
         if (options.log_callback) options.log_callback(LogLevel::Error, result.error_message);
-        if (m_throw_on_error) throw ChdException(result.error_message);
+        throw ChdException(result.error_message);
     }
     return result;
 }
@@ -334,7 +334,7 @@ ExtractionResult ChdExtractor::extract(const std::string& chd_path,
     auto result = extract_impl(chd_path, parent_chd_path, options);
     if (!result.success) {
         if (options.log_callback) options.log_callback(LogLevel::Error, result.error_message);
-        if (m_throw_on_error) throw ChdException(result.error_message);
+        throw ChdException(result.error_message);
     }
     return result;
 }
@@ -413,7 +413,15 @@ ExtractionResult ChdExtractor::extract_impl(const std::string& chd_path,
             std::ofstream meta_out(meta_path);
             if (!meta_out)
             {
-                result.error_message = "Cannot create metadata file: " + meta_path;
+                if (m_strict)
+                    throw ChdMetadataException("Cannot create metadata file '" + meta_path + "': check output directory permissions");
+                // Non-strict: log warning, return partial success with BIN data only
+                if (options.log_callback)
+                    options.log_callback(LogLevel::Warning, "Cannot create metadata file '" + meta_path + "' — BIN data extracted but .cue/.gdi not written");
+                result.success = true;
+                result.output_files = sink.output_files();
+                result.bytes_written = sink.bytes_written();
+                result.detected_type = proc_result.content_type;
                 return result;
             }
             meta_out << sink.metadata();

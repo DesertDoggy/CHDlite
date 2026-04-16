@@ -671,7 +671,11 @@ ContentHashResult ChdReader::hash_content(HashFlags flags) const
     auto proc = ChdProcessor::process(m_impl->filepath, sinks);
 
     if (!proc.success)
-        throw ChdHashException("Hash failed: " + proc.error_message);
+    {
+        result.success = false;
+        result.error_message = proc.error_message;
+        return result;
+    }
 
     result.tracks = std::move(hash_sink.tracks());
 

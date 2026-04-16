@@ -261,6 +261,14 @@ bool ChdReader::read_sector(uint32_t lba, void* buffer, TrackType type) const
 }
 
 // ======================> Hash sink for ChdProcessor
+//
+// Each algorithm is isolated: if one fails mid-track the error is recorded in
+// HashResult::error for that algorithm and data collection stops for it, but all
+// other algorithms continue unaffected.
+//
+// Error scoping:
+//   m_xxh3_init_err   — set once at construction (state allocation failure)
+//   m_sha1/md5/.../xxh3_err — per-track, reset at on_track_begin
 
 class HashSink : public ProcessorSink
 {
@@ -268,8 +276,11 @@ public:
     explicit HashSink(HashFlags flags = HashFlags::All)
         : m_flags(flags), m_xxh3_state(nullptr)
     {
-        if (has_flag(m_flags, HashFlags::XXH3_128))
+        if (has_flag(m_flags, HashFlags::XXH3_128)) {
             m_xxh3_state = XXH3_createState();
+            if (!m_xxh3_state)
+                m_xxh3_init_err = "XXH3 state allocation failed (out of memory)";
+        }
     }
 
     ~HashSink() override
@@ -282,12 +293,34 @@ public:
                         bool is_audio, uint32_t, uint32_t,
                         uint32_t, uint32_t, uint32_t) override
     {
-        if (has_flag(m_flags, HashFlags::SHA1))   m_sha1.reset();
-        if (has_flag(m_flags, HashFlags::MD5))    m_md5.reset();
-        if (has_flag(m_flags, HashFlags::CRC32))  m_crc.reset();
-        if (has_flag(m_flags, HashFlags::SHA256)) m_sha256.reset();
-        if (has_flag(m_flags, HashFlags::XXH3_128) && m_xxh3_state)
-            XXH3_128bits_reset(m_xxh3_state);
+        // Reset per-track error state for each algorithm
+        m_sha1_err.clear();
+        m_md5_err.clear();
+        m_crc_err.clear();
+        m_sha256_err.clear();
+        m_xxh3_err.clear();
+
+        if (has_flag(m_flags, HashFlags::SHA1) && m_sha1_err.empty()) {
+            try { m_sha1.reset(); }
+            catch (const std::exception& e) { m_sha1_err = e.what(); }
+        }
+        if (has_flag(m_flags, HashFlags::MD5) && m_md5_err.empty()) {
+            try { m_md5.reset(); }
+            catch (const std::exception& e) { m_md5_err = e.what(); }
+        }
+        if (has_flag(m_flags, HashFlags::CRC32) && m_crc_err.empty()) {
+            try { m_crc.reset(); }
+            catch (const std::exception& e) { m_crc_err = e.what(); }
+        }
+        if (has_flag(m_flags, HashFlags::SHA256) && m_sha256_err.empty()) {
+            try { m_sha256.reset(); }
+            catch (const std::exception& e) { m_sha256_err = e.what(); }
+        }
+        if (has_flag(m_flags, HashFlags::XXH3_128) && m_xxh3_state && m_xxh3_init_err.empty()) {
+            if (XXH3_128bits_reset(m_xxh3_state) == XXH_ERROR)
+                m_xxh3_err = "XXH3 reset failed";
+        }
+
         m_bytes = 0;
         m_tracks.push_back({});
         auto& t = m_tracks.back();
@@ -298,12 +331,27 @@ public:
 
     void on_data(const void* data, uint32_t len) override
     {
-        if (has_flag(m_flags, HashFlags::SHA1))   m_sha1.append(data, len);
-        if (has_flag(m_flags, HashFlags::MD5))    m_md5.append(data, len);
-        if (has_flag(m_flags, HashFlags::CRC32))  m_crc.append(data, len);
-        if (has_flag(m_flags, HashFlags::SHA256)) m_sha256.append(data, len);
-        if (has_flag(m_flags, HashFlags::XXH3_128) && m_xxh3_state)
-            XXH3_128bits_update(m_xxh3_state, data, len);
+        if (has_flag(m_flags, HashFlags::SHA1) && m_sha1_err.empty()) {
+            try { m_sha1.append(data, len); }
+            catch (const std::exception& e) { m_sha1_err = e.what(); }
+        }
+        if (has_flag(m_flags, HashFlags::MD5) && m_md5_err.empty()) {
+            try { m_md5.append(data, len); }
+            catch (const std::exception& e) { m_md5_err = e.what(); }
+        }
+        if (has_flag(m_flags, HashFlags::CRC32) && m_crc_err.empty()) {
+            try { m_crc.append(data, len); }
+            catch (const std::exception& e) { m_crc_err = e.what(); }
+        }
+        if (has_flag(m_flags, HashFlags::SHA256) && m_sha256_err.empty()) {
+            try { m_sha256.append(data, len); }
+            catch (const std::exception& e) { m_sha256_err = e.what(); }
+        }
+        if (has_flag(m_flags, HashFlags::XXH3_128) && m_xxh3_state &&
+            m_xxh3_init_err.empty() && m_xxh3_err.empty()) {
+            if (XXH3_128bits_update(m_xxh3_state, data, len) == XXH_ERROR)
+                m_xxh3_err = "XXH3 update failed";
+        }
         m_bytes += len;
     }
 
@@ -313,35 +361,64 @@ public:
         t.data_bytes = m_bytes;
 
         if (has_flag(m_flags, HashFlags::SHA1)) {
-            auto s = m_sha1.finish();
-            t.sha1 = { HashAlgorithm::SHA1, s.as_string(), {s.m_raw, s.m_raw + 20} };
+            if (m_sha1_err.empty()) {
+                try {
+                    auto s = m_sha1.finish();
+                    t.sha1 = { HashAlgorithm::SHA1, s.as_string(), {s.m_raw, s.m_raw + 20}, {} };
+                } catch (const std::exception& e) { m_sha1_err = e.what(); }
+            }
+            if (!m_sha1_err.empty())
+                t.sha1 = { HashAlgorithm::SHA1, {}, {}, m_sha1_err };
         }
         if (has_flag(m_flags, HashFlags::MD5)) {
-            auto m = m_md5.finish();
-            t.md5 = { HashAlgorithm::MD5, m.as_string(), {m.m_raw, m.m_raw + 16} };
+            if (m_md5_err.empty()) {
+                try {
+                    auto m = m_md5.finish();
+                    t.md5 = { HashAlgorithm::MD5, m.as_string(), {m.m_raw, m.m_raw + 16}, {} };
+                } catch (const std::exception& e) { m_md5_err = e.what(); }
+            }
+            if (!m_md5_err.empty())
+                t.md5 = { HashAlgorithm::MD5, {}, {}, m_md5_err };
         }
         if (has_flag(m_flags, HashFlags::CRC32)) {
-            auto c = m_crc.finish();
-            uint32_t val = c.m_raw;
-            char buf[9];
-            std::snprintf(buf, sizeof(buf), "%08x", val);
-            t.crc32 = { HashAlgorithm::CRC32, buf,
-                         { uint8_t(val >> 24), uint8_t(val >> 16), uint8_t(val >> 8), uint8_t(val) } };
+            if (m_crc_err.empty()) {
+                try {
+                    auto c = m_crc.finish();
+                    uint32_t val = c.m_raw;
+                    char buf[9];
+                    std::snprintf(buf, sizeof(buf), "%08x", val);
+                    t.crc32 = { HashAlgorithm::CRC32, buf,
+                                { uint8_t(val >> 24), uint8_t(val >> 16),
+                                  uint8_t(val >> 8),  uint8_t(val) }, {} };
+                } catch (const std::exception& e) { m_crc_err = e.what(); }
+            }
+            if (!m_crc_err.empty())
+                t.crc32 = { HashAlgorithm::CRC32, {}, {}, m_crc_err };
         }
         if (has_flag(m_flags, HashFlags::SHA256)) {
-            auto h = m_sha256.finish();
-            t.sha256 = { HashAlgorithm::SHA256, h.as_string(), {h.m_raw, h.m_raw + 32} };
+            if (m_sha256_err.empty()) {
+                try {
+                    auto h = m_sha256.finish();
+                    t.sha256 = { HashAlgorithm::SHA256, h.as_string(), {h.m_raw, h.m_raw + 32}, {} };
+                } catch (const std::exception& e) { m_sha256_err = e.what(); }
+            }
+            if (!m_sha256_err.empty())
+                t.sha256 = { HashAlgorithm::SHA256, {}, {}, m_sha256_err };
         }
-        if (has_flag(m_flags, HashFlags::XXH3_128) && m_xxh3_state) {
-            XXH128_hash_t h = XXH3_128bits_digest(m_xxh3_state);
-            char buf[33];
-            std::snprintf(buf, sizeof(buf), "%016llx%016llx",
-                          (unsigned long long)h.high64, (unsigned long long)h.low64);
-            // Store 16 raw bytes: high64 big-endian then low64 big-endian
-            std::vector<uint8_t> raw(16);
-            for (int i = 7; i >= 0; --i) { raw[7 - i] = uint8_t(h.high64 >> (i * 8)); }
-            for (int i = 7; i >= 0; --i) { raw[15 - i] = uint8_t(h.low64 >> (i * 8)); }
-            t.xxh3_128 = { HashAlgorithm::SHA1 /*placeholder*/, buf, std::move(raw) };
+        if (has_flag(m_flags, HashFlags::XXH3_128)) {
+            const std::string& combined_err = m_xxh3_init_err.empty() ? m_xxh3_err : m_xxh3_init_err;
+            if (combined_err.empty() && m_xxh3_state) {
+                XXH128_hash_t h = XXH3_128bits_digest(m_xxh3_state);
+                char buf[33];
+                std::snprintf(buf, sizeof(buf), "%016llx%016llx",
+                              (unsigned long long)h.high64, (unsigned long long)h.low64);
+                std::vector<uint8_t> raw(16);
+                for (int i = 7; i >= 0; --i) { raw[7 - i]  = uint8_t(h.high64 >> (i * 8)); }
+                for (int i = 7; i >= 0; --i) { raw[15 - i] = uint8_t(h.low64  >> (i * 8)); }
+                t.xxh3_128 = { HashAlgorithm::XXH3_128, buf, std::move(raw), {} };
+            } else {
+                t.xxh3_128 = { HashAlgorithm::XXH3_128, {}, {}, combined_err };
+            }
         }
     }
 
@@ -354,6 +431,15 @@ private:
     util::crc32_creator  m_crc;
     util::sha256_creator m_sha256;
     XXH3_state_t*        m_xxh3_state;
+    std::string          m_xxh3_init_err; // set at construction, never cleared
+
+    // Per-track per-algorithm error state (reset at on_track_begin)
+    std::string  m_sha1_err;
+    std::string  m_md5_err;
+    std::string  m_crc_err;
+    std::string  m_sha256_err;
+    std::string  m_xxh3_err;
+
     uint64_t             m_bytes = 0;
     std::vector<TrackHashResult> m_tracks;
 };
@@ -496,12 +582,12 @@ public:
         if (has_flag(m_flags, HashFlags::SHA1)) {
             util::sha1_creator sha1; sha1.append(data, len);
             auto s = sha1.finish();
-            m_hash.sha1 = { HashAlgorithm::SHA1, s.as_string(), {s.m_raw, s.m_raw + 20} };
+            m_hash.sha1 = { HashAlgorithm::SHA1, s.as_string(), {s.m_raw, s.m_raw + 20}, {} };
         }
         if (has_flag(m_flags, HashFlags::MD5)) {
             util::md5_creator md5; md5.append(data, len);
             auto m = md5.finish();
-            m_hash.md5 = { HashAlgorithm::MD5, m.as_string(), {m.m_raw, m.m_raw + 16} };
+            m_hash.md5 = { HashAlgorithm::MD5, m.as_string(), {m.m_raw, m.m_raw + 16}, {} };
         }
         if (has_flag(m_flags, HashFlags::CRC32)) {
             util::crc32_creator crc; crc.append(data, len);
@@ -510,12 +596,12 @@ public:
             char buf[9];
             std::snprintf(buf, sizeof(buf), "%08x", val);
             m_hash.crc32 = { HashAlgorithm::CRC32, buf,
-                             { uint8_t(val >> 24), uint8_t(val >> 16), uint8_t(val >> 8), uint8_t(val) } };
+                             { uint8_t(val >> 24), uint8_t(val >> 16), uint8_t(val >> 8), uint8_t(val) }, {} };
         }
         if (has_flag(m_flags, HashFlags::SHA256)) {
             util::sha256_creator sha256; sha256.append(data, len);
             auto h = sha256.finish();
-            m_hash.sha256 = { HashAlgorithm::SHA256, h.as_string(), {h.m_raw, h.m_raw + 32} };
+            m_hash.sha256 = { HashAlgorithm::SHA256, h.as_string(), {h.m_raw, h.m_raw + 32}, {} };
         }
         if (has_flag(m_flags, HashFlags::XXH3_128)) {
             XXH128_hash_t h = XXH3_128bits(data, len);
@@ -525,7 +611,7 @@ public:
             std::vector<uint8_t> raw(16);
             for (int i = 7; i >= 0; --i) { raw[7 - i] = uint8_t(h.high64 >> (i * 8)); }
             for (int i = 7; i >= 0; --i) { raw[15 - i] = uint8_t(h.low64 >> (i * 8)); }
-            m_hash.xxh3_128 = { HashAlgorithm::SHA1 /*placeholder*/, buf, std::move(raw) };
+            m_hash.xxh3_128 = { HashAlgorithm::XXH3_128, buf, std::move(raw), {} };
         }
 
         m_hash.track_number = 0;
@@ -562,15 +648,10 @@ private:
 
 ContentHashResult ChdReader::hash_content(HashFlags flags) const
 {
-    ContentHashResult result = {};
-    result.success = false;
-
     if (!m_impl->chd.opened())
-    {
-        result.error_message = "CHD file not open";
-        return result;
-    }
+        throw ChdInputException("CHD file not open");
 
+    ContentHashResult result = {};
     auto& chd = m_impl->chd;
     result.content_type = m_impl->detect_type();
 
@@ -590,10 +671,7 @@ ContentHashResult ChdReader::hash_content(HashFlags flags) const
     auto proc = ChdProcessor::process(m_impl->filepath, sinks);
 
     if (!proc.success)
-    {
-        result.error_message = proc.error_message;
-        return result;
-    }
+        throw ChdHashException("Hash failed: " + proc.error_message);
 
     result.tracks = std::move(hash_sink.tracks());
 

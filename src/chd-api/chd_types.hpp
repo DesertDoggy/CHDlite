@@ -67,7 +67,8 @@ enum class HashAlgorithm
     SHA1,
     MD5,
     CRC32,
-    SHA256
+    SHA256,
+    XXH3_128
 };
 
 // ======================> Hash algorithm flags (bitmask for selecting which to compute)
@@ -160,8 +161,9 @@ enum class SubcodeType
 struct HashResult
 {
     HashAlgorithm algorithm;
-    std::string   hex_string;    // hex-encoded digest
-    std::vector<uint8_t> raw;    // raw digest bytes
+    std::string   hex_string;    // hex-encoded digest (empty if error)
+    std::vector<uint8_t> raw;    // raw digest bytes (empty if error)
+    std::string   error;         // non-empty if this algorithm failed; other algorithms may still be valid
 };
 
 struct TrackHashResult
@@ -360,6 +362,8 @@ struct ArchiveOptions
 //  ├─ ChdOutputException      — output CHD cannot be created (permissions, disk full, etc.)
 //  ├─ ChdMetadataException    — CHD created but metadata write failed (partially written)
 //  ├─ ChdCompressionException — MAME codec failure mid-compression (Critical severity)
+//  ├─ ChdHashException        — fatal I/O or state failure during hashing (individual algorithm
+//  │                            errors are recorded in HashResult::error without throwing)
 //  └─ ChdCancelledException   — progress callback returned false (Info severity)
 
 class ChdException : public std::exception
@@ -416,6 +420,16 @@ class ChdCompressionException : public ChdException
 public:
     explicit ChdCompressionException(std::string message)
         : ChdException(std::move(message), LogLevel::Critical) {}
+};
+
+// Thrown when a hash operation cannot proceed at all (CHD not open, I/O failure).
+// Per-algorithm failures (individual hash library errors) are recorded in
+// HashResult::error and do NOT throw — other algorithms can still complete.
+class ChdHashException : public ChdException
+{
+public:
+    explicit ChdHashException(std::string message)
+        : ChdException(std::move(message), LogLevel::Error) {}
 };
 
 class ChdCancelledException : public ChdException

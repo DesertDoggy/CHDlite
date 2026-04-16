@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <iomanip>
+#include <mutex>
 #include <sstream>
 
 
@@ -435,10 +436,59 @@ void crc16_creator::append(const void *data, uint32_t length) noexcept
 
 	const auto *src = reinterpret_cast<const uint8_t *>(data);
 
+	// slice-by-16 precomputed tables (one-time init, thread-safe)
+	static uint16_t s_slice[16][256];
+	static uint16_t s_slicehi[256];
+	static uint16_t s_slicelo[256];
+	static uint16_t s_slice16hi[256];
+	static uint16_t s_slice16lo[256];
+	static std::once_flag s_init;
+	std::call_once(s_init, []() {
+		auto tc = [](uint16_t v) -> uint16_t {
+			return (uint16_t)((v << 8) ^ s_table[v >> 8]);
+		};
+		for (int b = 0; b < 256; b++) {
+			s_slice[0][b] = s_table[b];
+			for (int i = 1; i < 16; i++)
+				s_slice[i][b] = tc(s_slice[i - 1][b]);
+		}
+		for (int i = 0; i < 256; i++) {
+			uint16_t vh = (uint16_t)(i << 8), vl = (uint16_t)i;
+			for (int j = 0; j < 8; j++) { vh = tc(vh); vl = tc(vl); }
+			s_slicehi[i] = vh;
+			s_slicelo[i] = vl;
+			uint16_t vh16 = vh, vl16 = vl;
+			for (int j = 0; j < 8; j++) { vh16 = tc(vh16); vl16 = tc(vl16); }
+			s_slice16hi[i] = vh16;
+			s_slice16lo[i] = vl16;
+		}
+	});
+
 	// fetch the current value into a local and rip through the source data
 	uint16_t crc = m_accum.m_raw;
-	while (length-- != 0)
-		crc = (crc << 8) ^ s_table[(crc >> 8) ^ *src++];
+
+	// process 16 bytes at a time
+	while (length >= 16) {
+		crc = (uint16_t)(s_slice16hi[crc >> 8] ^ s_slice16lo[crc & 0xFF]
+			^ s_slice[15][src[0]] ^ s_slice[14][src[1]] ^ s_slice[13][src[2]] ^ s_slice[12][src[3]]
+			^ s_slice[11][src[4]] ^ s_slice[10][src[5]] ^ s_slice[9][src[6]]  ^ s_slice[8][src[7]]
+			^ s_slice[7][src[8]]  ^ s_slice[6][src[9]]  ^ s_slice[5][src[10]] ^ s_slice[4][src[11]]
+			^ s_slice[3][src[12]] ^ s_slice[2][src[13]] ^ s_slice[1][src[14]] ^ s_slice[0][src[15]]);
+		src += 16;
+		length -= 16;
+	}
+	// process 8 bytes at a time
+	while (length >= 8) {
+		crc = (uint16_t)(s_slicehi[crc >> 8] ^ s_slicelo[crc & 0xFF]
+			^ s_slice[7][src[0]] ^ s_slice[6][src[1]] ^ s_slice[5][src[2]] ^ s_slice[4][src[3]]
+			^ s_slice[3][src[4]] ^ s_slice[2][src[5]] ^ s_slice[1][src[6]] ^ s_slice[0][src[7]]);
+		src += 8;
+		length -= 8;
+	}
+	// remaining bytes
+	while (length--)
+		crc = (uint16_t)((crc << 8) ^ s_table[(crc >> 8) ^ *src++]);
+
 	m_accum.m_raw = crc;
 }
 

@@ -37,6 +37,9 @@
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/basic_file_sink.h>
 
+// OSD thread control — set before any compression to override auto-detect
+extern int osd_num_processors;
+
 namespace fs = std::filesystem;
 using namespace chdlite;
 
@@ -427,7 +430,7 @@ static Args parse_args(int argc, char** argv)
         else if (arg == "-c" || arg == "--compression") a.compression = next();
         else if (arg == "-hs" || arg == "--hunksize")  a.hunk_size = static_cast<uint32_t>(std::stoul(next()));
         else if (arg == "-us" || arg == "--unitsize")   a.unit_size = static_cast<uint32_t>(std::stoul(next()));
-        else if (arg == "-np" || arg == "--numprocessors") a.num_processors = std::stoi(next());
+        else if (arg == "-np" || arg == "-j" || arg == "--numprocessors") a.num_processors = std::stoi(next());
         else if (arg == "-isb" || arg == "--inputstartbyte")  a.input_start_byte = std::stoull(next());
         else if (arg == "-ish" || arg == "--inputstarthunk")  a.input_start_hunk = std::stoull(next());
         else if (arg == "-ib" || arg == "--inputbytes")       a.input_bytes = std::stoull(next());
@@ -895,6 +898,10 @@ static int cmd_create(const Args& args)
     if (opts.hunk_bytes)
         std::printf("Hunk size:    %s bytes\n", big_int_string(opts.hunk_bytes).c_str());
 
+    // Wire -np to OSD thread control
+    if (args.num_processors > 0)
+        osd_num_processors = args.num_processors;
+
     ChdArchiver archiver;
     auto result = archiver.archive(args.input, output, opts);
 
@@ -964,6 +971,10 @@ static int cmd_create_typed(const Args& args, const char* type_hint)
         std::printf("Compression:  %s\n", codec_list_string(opts.compression).c_str());
     if (opts.hunk_bytes)
         std::printf("Hunk size:    %s bytes\n", big_int_string(opts.hunk_bytes).c_str());
+
+    // Wire -np to OSD thread control
+    if (args.num_processors > 0)
+        osd_num_processors = args.num_processors;
 
     ChdArchiver archiver;
     ArchiveResult result;

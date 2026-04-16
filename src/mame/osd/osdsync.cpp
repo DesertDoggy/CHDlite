@@ -92,8 +92,8 @@ int osd_get_num_processors(bool heavy_mt)
 	return 1;
 #else
 	unsigned int threads = std::thread::hardware_concurrency();
-	// max out at 4 for now since scaling above that seems to do poorly
-	return heavy_mt ? threads : (threads > 4U ? 4U : threads);
+	// CHDlite: use all available cores (no MAME 4-core cap)
+	return threads > 0 ? threads : 1;
 #endif
 }
 

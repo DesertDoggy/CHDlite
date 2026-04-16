@@ -180,6 +180,7 @@ private:
 	// internal state
 	CLzmaEncProps           m_props;
 	chd_lzma_allocator      m_allocator;
+	CLzmaEncHandle          m_encoder;
 };
 
 
@@ -258,6 +259,7 @@ private:
 	// internal state
 	bool            m_big_endian;
 	flac_encoder    m_encoder;
+	std::vector<uint8_t> m_tmpbuf;
 };
 
 
@@ -1253,6 +1255,11 @@ chd_lzma_compressor::chd_lzma_compressor(chd_file &chd, uint32_t hunkbytes, bool
 {
 	// initialize the properties
 	configure_properties(m_props, hunkbytes);
+
+	// create persistent encoder instance
+	m_encoder = LzmaEnc_Create(&m_allocator);
+	if (m_encoder == nullptr)
+		throw std::error_condition(chd_file::error::COMPRESSION_ERROR);
 }
 
 
@@ -1262,6 +1269,8 @@ chd_lzma_compressor::chd_lzma_compressor(chd_file &chd, uint32_t hunkbytes, bool
 
 chd_lzma_compressor::~chd_lzma_compressor()
 {
+	if (m_encoder != nullptr)
+		LzmaEnc_Destroy(m_encoder, &m_allocator, &m_allocator);
 }
 
 
@@ -1271,34 +1280,18 @@ chd_lzma_compressor::~chd_lzma_compressor()
 
 uint32_t chd_lzma_compressor::compress(const uint8_t *src, uint32_t srclen, uint8_t *dest)
 {
-	// allocate the encoder
-	CLzmaEncHandle encoder = LzmaEnc_Create(&m_allocator);
-	if (encoder == nullptr)
+	// configure the encoder (resets state without realloc)
+	SRes res = LzmaEnc_SetProps(m_encoder, &m_props);
+	if (res != SZ_OK)
 		throw std::error_condition(chd_file::error::COMPRESSION_ERROR);
 
-	try
-	{
-		// configure the encoder
-		SRes res = LzmaEnc_SetProps(encoder, &m_props);
-		if (res != SZ_OK)
-			throw std::error_condition(chd_file::error::COMPRESSION_ERROR);
+	// run it
+	SizeT complen = srclen;
+	res = LzmaEnc_MemEncode(m_encoder, dest, &complen, src, srclen, 0, nullptr, &m_allocator, &m_allocator);
+	if (res != SZ_OK)
+		throw std::error_condition(chd_file::error::COMPRESSION_ERROR);
 
-		// run it
-		SizeT complen = srclen;
-		res = LzmaEnc_MemEncode(encoder, dest, &complen, src, srclen, 0, nullptr, &m_allocator, &m_allocator);
-		if (res != SZ_OK)
-			throw std::error_condition(chd_file::error::COMPRESSION_ERROR);
-
-		// clean up
-		LzmaEnc_Destroy(encoder, &m_allocator, &m_allocator);
-		return complen;
-	}
-	catch (...)
-	{
-		// destroy before re-throwing
-		LzmaEnc_Destroy(encoder, &m_allocator, &m_allocator);
-		throw;
-	}
+	return complen;
 }
 
 
@@ -1462,6 +1455,7 @@ void chd_huffman_decompressor::decompress(const uint8_t *src, uint32_t complen, 
 
 chd_flac_compressor::chd_flac_compressor(chd_file &chd, uint32_t hunkbytes, bool lossy)
 	: chd_compressor(chd, hunkbytes, lossy)
+	, m_tmpbuf(hunkbytes)
 {
 	// determine whether we want native or swapped samples
 	uint16_t native_endian = 0;
@@ -1478,38 +1472,42 @@ chd_flac_compressor::chd_flac_compressor(chd_file &chd, uint32_t hunkbytes, bool
 
 //-------------------------------------------------
 //  compress - compress data using the FLAC codec
+//  Always 2 encodes (BE into dest, LE into tmpbuf;
+//  memcpy winner). Eliminates the 3rd re-encode pass.
 //-------------------------------------------------
 
 uint32_t chd_flac_compressor::compress(const uint8_t *src, uint32_t srclen, uint8_t *dest)
 {
-	// reset and encode big-endian
+	// encode big-endian directly into dest+1
 	m_encoder.reset(dest + 1, hunkbytes() - 1);
 	if (!m_encoder.encode_interleaved(reinterpret_cast<const int16_t *>(src), srclen / 4, !m_big_endian))
 		throw std::error_condition(chd_file::error::COMPRESSION_ERROR);
 	uint32_t complen_be = m_encoder.finish();
 
-	// reset and encode little-endian
-	m_encoder.reset(dest + 1, hunkbytes() - 1);
+	// encode little-endian into temp buffer
+	m_encoder.reset(m_tmpbuf.data(), hunkbytes());
 	if (!m_encoder.encode_interleaved(reinterpret_cast<const int16_t *>(src), srclen / 4, m_big_endian))
 		throw std::error_condition(chd_file::error::COMPRESSION_ERROR);
 	uint32_t complen_le = m_encoder.finish();
 
-	// pick the best one and add a byte
-	uint32_t complen = std::min(complen_le, complen_be);
-	if (complen + 1 >= hunkbytes())
-		throw std::error_condition(chd_file::error::COMPRESSION_ERROR);
-
-	// if big-endian was better, re-do it
-	dest[0] = 'L';
-	if (complen != complen_le)
+	// pick the best one
+	if (complen_le <= complen_be)
 	{
-		dest[0] = 'B';
-		m_encoder.reset(dest + 1, hunkbytes() - 1);
-		if (!m_encoder.encode_interleaved(reinterpret_cast<const int16_t *>(src), srclen / 4, !m_big_endian))
+		// LE wins — copy from tmpbuf into dest+1
+		dest[0] = 'L';
+		std::memcpy(dest + 1, m_tmpbuf.data(), complen_le);
+		if (complen_le + 1 >= hunkbytes())
 			throw std::error_condition(chd_file::error::COMPRESSION_ERROR);
-		m_encoder.finish();
+		return complen_le + 1;
 	}
-	return complen + 1;
+	else
+	{
+		// BE wins — already in dest+1
+		dest[0] = 'B';
+		if (complen_be + 1 >= hunkbytes())
+			throw std::error_condition(chd_file::error::COMPRESSION_ERROR);
+		return complen_be + 1;
+	}
 }
 
 

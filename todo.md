@@ -17,19 +17,21 @@
   - This matches main application terminology
 
 ## macOS
-- [ ] **Drag and Drop not working** - Needs simple GUI
-  - CLI mode only currently
-  - Implement basic drag/drop file handling to accept CHD files
-  - Consider lightweight UI framework or native macOS integration
+- [ ] **Drag and Drop** - Needs simple GUI (defer, time-consuming)
+  - Build a minimal native macOS window/widget app to accept dropped files
+  - Reuse same detection/hash/read logic from CLI
+  - Share UI patterns with Windows widget once designed
 
-## Windows
-- [ ] **Drag and Drop IS working** - BUT terminal closes automatically
-  - Results/hash output becomes invisible without result/log output
-  - Need to:
-    - Persist terminal window after execution
-    - Save output to log file
-    - Or display results in GUI overlay/output window
-    - Or use `pause` command to keep window open until user input
+## Windows — Drag and Drop (next priority)
+- [ ] **`read` drag and drop**
+  - Use `pause` to keep terminal open after output
+  - Output: terminal only (no log file by default)
+  - Behaviour: drop CHD/CUE/ISO → print Platform/Title/Manufacturer ID → pause
+
+- [ ] **`hash` drag and drop**
+  - Use `pause` to keep terminal open after output
+  - Default: also write `.hashes` log file alongside input file
+  - Behaviour: drop file(s) → compute hash(es) → print + save `.hashes` → pause
 
 ## CD Archiving Codec Selection
 - [ ] **Define codec strategy for auto-compression**

@@ -24,6 +24,7 @@
 #include "chd_api.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -31,7 +32,9 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <spdlog/spdlog.h>
@@ -254,21 +257,25 @@ static const char* hash_algorithm_name(HashFlags f)
 }
 
 // Progress callback: prints to stderr with carriage return (chdman style)
-static auto make_progress(const char* verb)
+// label is optional — when non-empty, prefixes each line (used in parallel batch)
+static auto make_progress(const char* verb, const std::string& label = {})
 {
     auto last_time = std::chrono::steady_clock::now();
-    return [verb, last_time](uint64_t done, uint64_t total) mutable -> bool
+    return [verb, label, last_time](uint64_t done, uint64_t total) mutable -> bool
     {
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
         if (elapsed >= 500 || done >= total)
         {
             double pct = total ? 100.0 * done / total : 100.0;
-            std::fprintf(stderr, "\r%s, %.1f%% complete...  ", verb, pct);
+            if (label.empty())
+                std::fprintf(stderr, "\r%s, %.1f%% complete...  ", verb, pct);
+            else
+                std::fprintf(stderr, "[%s] %s, %.1f%%\n", label.c_str(), verb, pct);
             std::fflush(stderr);
             last_time = now;
         }
-        if (done >= total)
+        if (done >= total && label.empty())
             std::fprintf(stderr, "\n");
         return true; // never cancel
     };
@@ -288,6 +295,7 @@ struct Args
     uint32_t    hunk_size = 0;
     uint32_t    unit_size = 0;
     int         num_processors = 0;
+    int         max_concurrent_files = 0; // 0 = auto; -jf override
     bool        force = false;
     bool        splitbin = false;
     bool        no_splitbin = false;
@@ -431,6 +439,7 @@ static Args parse_args(int argc, char** argv)
         else if (arg == "-hs" || arg == "--hunksize")  a.hunk_size = static_cast<uint32_t>(std::stoul(next()));
         else if (arg == "-us" || arg == "--unitsize")   a.unit_size = static_cast<uint32_t>(std::stoul(next()));
         else if (arg == "-np" || arg == "-j" || arg == "--numprocessors") a.num_processors = std::stoi(next());
+        else if (arg == "-jf" || arg == "--concurrent-files") a.max_concurrent_files = std::stoi(next());
         else if (arg == "-isb" || arg == "--inputstartbyte")  a.input_start_byte = std::stoull(next());
         else if (arg == "-ish" || arg == "--inputstarthunk")  a.input_start_hunk = std::stoull(next());
         else if (arg == "-ib" || arg == "--inputbytes")       a.input_bytes = std::stoull(next());
@@ -850,7 +859,8 @@ static int cmd_create(const Args& args)
     {
         if (args.compression == "none")
         {
-            opts.codec = Codec::None;
+            std::fprintf(stderr, "Error: uncompressed CHD (-c none) is not yet supported\n");
+            return 1;
         }
         else
         {
@@ -945,19 +955,27 @@ static int cmd_create_typed(const Args& args, const char* type_hint)
 
     if (!args.compression.empty())
     {
-        std::string s = args.compression;
-        int slot = 0;
-        size_t pos = 0;
-        while (pos < s.size() && slot < 4)
+        if (args.compression == "none")
         {
-            auto comma = s.find(',', pos);
-            std::string tok = (comma == std::string::npos)
-                ? s.substr(pos) : s.substr(pos, comma - pos);
-            while (!tok.empty() && tok.front() == ' ') tok.erase(tok.begin());
-            while (!tok.empty() && tok.back() == ' ') tok.pop_back();
-            for (auto& c : tok) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            opts.compression[slot++] = parse_codec(tok);
-            pos = (comma == std::string::npos) ? s.size() : comma + 1;
+            std::fprintf(stderr, "Error: uncompressed CHD (-c none) is not yet supported\n");
+            return 1;
+        }
+        else
+        {
+            std::string s = args.compression;
+            int slot = 0;
+            size_t pos = 0;
+            while (pos < s.size() && slot < 4)
+            {
+                auto comma = s.find(',', pos);
+                std::string tok = (comma == std::string::npos)
+                    ? s.substr(pos) : s.substr(pos, comma - pos);
+                while (!tok.empty() && tok.front() == ' ') tok.erase(tok.begin());
+                while (!tok.empty() && tok.back() == ' ') tok.pop_back();
+                for (auto& c : tok) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                opts.compression[slot++] = parse_codec(tok);
+                pos = (comma == std::string::npos) ? s.size() : comma + 1;
+            }
         }
     }
 
@@ -1090,6 +1108,7 @@ static int cmd_auto(const Args& args)
 
 // Run cmd_auto on a list of paths (files and/or folders).
 // Folders are scanned for supported files (.chd, .cue, .gdi, .iso).
+// Processes files in parallel when multiple cores are available.
 static int cmd_auto_batch(const Args& base_args, const std::vector<std::string>& paths)
 {
     // Collect all files to process
@@ -1123,33 +1142,107 @@ static int cmd_auto_batch(const Args& base_args, const std::vector<std::string>&
         return 1;
     }
 
-    std::printf("Batch: %zu file(s) to process\n\n", files.size());
+    // Determine thread budget: divide cores among concurrent files
+    int total_cores = static_cast<int>(std::thread::hardware_concurrency());
+    if (total_cores <= 0) total_cores = 4;
 
-    int ok = 0, fail = 0;
-    for (const auto& f : files)
+    // Use user-specified -np as total thread budget if given
+    if (base_args.num_processors > 0)
+        total_cores = base_args.num_processors;
+
+    int max_concurrent;
+    if (base_args.max_concurrent_files > 0)
+        max_concurrent = base_args.max_concurrent_files;
+    else
+        max_concurrent = std::max(1, std::min(4, total_cores / 4));
+    int threads_per_file = std::max(2, total_cores / max_concurrent);
+
+    // Single file → sequential path (full thread budget, with progress)
+    if (files.size() == 1 || max_concurrent <= 1)
     {
-        std::printf("--- [%d/%d] %s ---\n", ok + fail + 1, (int)files.size(), f.filename().string().c_str());
-        Args a = base_args;
-        a.input = f.string();
-        a.command = "auto";
-        g_input_file = a.input;
-
-        int rc = cmd_auto(a);
-        if (rc == 0)
-        {
-            log_info("OK");
-            ++ok;
-        }
-        else
-        {
-            std::fprintf(stderr, "  FAILED: %s\n", f.string().c_str());
-            ++fail;
-        }
-        std::printf("\n");
+        max_concurrent = 1;
+        threads_per_file = total_cores;
     }
 
-    std::printf("Batch complete: %d OK, %d failed, %d total\n", ok, fail, ok + fail);
-    return fail > 0 ? 1 : 0;
+    // Set global thread budget before spawning any work
+    osd_num_processors = threads_per_file;
+
+    std::printf("Batch: %zu file(s), %d concurrent (%d threads each)\n\n",
+                files.size(), max_concurrent, threads_per_file);
+
+    if (max_concurrent <= 1)
+    {
+        // Sequential mode — full progress bars
+        int ok = 0, fail = 0;
+        for (const auto& f : files)
+        {
+            std::printf("--- [%d/%d] %s ---\n", ok + fail + 1, (int)files.size(), f.filename().string().c_str());
+            Args a = base_args;
+            a.input = f.string();
+            a.command = "auto";
+            a.num_processors = 0; // already set via osd_num_processors
+            g_input_file = a.input;
+
+            int rc = cmd_auto(a);
+            if (rc == 0) { log_info("OK"); ++ok; }
+            else { std::fprintf(stderr, "  FAILED: %s\n", f.string().c_str()); ++fail; }
+            std::printf("\n");
+        }
+        std::printf("Batch complete: %d OK, %d failed, %d total\n", ok, fail, ok + fail);
+        return fail > 0 ? 1 : 0;
+    }
+
+    // Parallel mode — worker threads pull from shared index
+    std::atomic<int> next_index{0};
+    std::atomic<int> ok{0}, fail{0};
+    std::mutex io_mutex;
+
+    auto worker = [&]() {
+        for (;;)
+        {
+            int idx = next_index.fetch_add(1, std::memory_order_relaxed);
+            if (idx >= static_cast<int>(files.size()))
+                break;
+
+            const auto& f = files[idx];
+            {
+                std::lock_guard<std::mutex> lk(io_mutex);
+                std::printf("--- [%d/%d] %s ---\n", idx + 1, (int)files.size(), f.filename().string().c_str());
+            }
+
+            Args a = base_args;
+            a.input = f.string();
+            a.command = "auto";
+            a.num_processors = 0; // already set via osd_num_processors
+
+            int rc = cmd_auto(a);
+
+            {
+                std::lock_guard<std::mutex> lk(io_mutex);
+                if (rc == 0)
+                {
+                    std::printf("  OK: %s\n", f.filename().string().c_str());
+                    ++ok;
+                }
+                else
+                {
+                    std::fprintf(stderr, "  FAILED: %s\n", f.string().c_str());
+                    ++fail;
+                }
+            }
+        }
+    };
+
+    std::vector<std::thread> threads;
+    threads.reserve(max_concurrent);
+    for (int i = 0; i < max_concurrent; i++)
+        threads.emplace_back(worker);
+    for (auto& t : threads)
+        t.join();
+
+    std::printf("\nBatch complete: %d OK, %d failed, %d total\n",
+                ok.load(), fail.load(), ok.load() + fail.load());
+    return fail.load() > 0 ? 1 : 0;
 }
 
 // Determine default mode from argv[0]: "chdread" → read, "chdhash" → hash, else → auto

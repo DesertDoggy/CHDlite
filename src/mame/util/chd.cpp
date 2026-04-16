@@ -3043,12 +3043,12 @@ std::error_condition chd_file_compressor::compress_continue(double &progress, do
 	if (UNEXPECTED(m_read_error))
 		return m_read_error;
 
-	// if done reading, queue some more
-	while (m_read_queue_offset < m_logicalbytes && osd_work_queue_items(m_read_queue) < 2)
+	// if done reading, queue some more (quarter-buffer batches, up to 4 pending for finer overlap)
+	while (m_read_queue_offset < m_logicalbytes && osd_work_queue_items(m_read_queue) < 4)
 	{
-		// see if we have enough free work items to read the next half of a buffer
+		// see if we have enough free work items to read the next quarter of a buffer
 		uint32_t const startitem = m_read_queue_offset / hunk_bytes();
-		uint32_t const enditem = startitem + WORK_BUFFER_HUNKS / 2;
+		uint32_t const enditem = startitem + WORK_BUFFER_HUNKS / 4;
 		uint32_t curitem = startitem;
 		while ((curitem < enditem) && (m_work_item[curitem % WORK_BUFFER_HUNKS].m_status == WS_READY))
 			++curitem;
@@ -3066,7 +3066,7 @@ std::error_condition chd_file_compressor::compress_continue(double &progress, do
 		for (curitem = startitem; curitem < enditem; curitem++)
 			m_work_item[curitem % WORK_BUFFER_HUNKS].m_status = WS_READING;
 		osd_work_item_queue(m_read_queue, async_read_static, this, WORK_ITEM_FLAG_AUTO_RELEASE);
-		m_read_queue_offset += WORK_BUFFER_HUNKS * hunk_bytes() / 2;
+		m_read_queue_offset += WORK_BUFFER_HUNKS * hunk_bytes() / 4;
 	}
 
 	// flush out any finished items
@@ -3079,6 +3079,13 @@ std::error_condition chd_file_compressor::compress_continue(double &progress, do
 		{
 			osd_work_item_release(item.m_osd);
 			item.m_osd = nullptr;
+		}
+
+		// compute hashes on main thread (deferred from worker for L1/L2 cache locality)
+		if (!m_walking_parent)
+		{
+			item.m_hash[0].m_crc16 = util::crc16_creator::simple(item.m_data, hunk_bytes());
+			item.m_hash[0].m_sha1 = util::sha1_creator::simple(item.m_data, hunk_bytes());
 		}
 
 		if (m_walking_parent)
@@ -3254,16 +3261,8 @@ void chd_file_compressor::async_compress_hunk(work_item &item, int threadid)
 	assert(threadid < std::size(m_codecs));
 	item.m_codecs = m_codecs[threadid];
 
-	// compute CRC-16 and SHA-1 hashes
-	item.m_hash[0].m_crc16 = util::crc16_creator::simple(item.m_data, hunk_bytes());
-	item.m_hash[0].m_sha1 = util::sha1_creator::simple(item.m_data, hunk_bytes());
-
-	// find the best compression scheme, unless we already have a self or parent match
-	// (note we may miss a self match from blocks not yet added, but this just results in extra work)
-	// TODO: data race
-	if ((m_current_map.find(item.m_hash[0].m_crc16, item.m_hash[0].m_sha1) == hashmap::NOT_FOUND) &&
-			(m_parent_map.find(item.m_hash[0].m_crc16, item.m_hash[0].m_sha1) == hashmap::NOT_FOUND))
-		item.m_compression = item.m_codecs->find_best_compressor(item.m_data, item.m_compressed, item.m_complen);
+	// always compress — hashing is deferred to the main thread for better L1/L2 cache locality
+	item.m_compression = item.m_codecs->find_best_compressor(item.m_data, item.m_compressed, item.m_complen);
 
 	// mark us complete
 	item.m_status = WS_COMPLETE;
@@ -3300,14 +3299,14 @@ void chd_file_compressor::async_read()
 	if (UNEXPECTED(m_read_error))
 		return;
 
-	// determine parameters for the read
+	// determine parameters for the read (quarter-buffer batches)
 	uint32_t const work_buffer_bytes = WORK_BUFFER_HUNKS * hunk_bytes();
-	uint32_t numbytes = work_buffer_bytes / 2;
+	uint32_t numbytes = work_buffer_bytes / 4;
 	if ((m_read_done_offset + numbytes) > logical_bytes())
 		numbytes = logical_bytes() - m_read_done_offset;
 
 	uint8_t *const dest = &m_work_buffer[0] + (m_read_done_offset % work_buffer_bytes);
-	assert((&m_work_buffer[0] == dest) || (&m_work_buffer[work_buffer_bytes / 2] == dest));
+	assert(dest >= &m_work_buffer[0] && dest < &m_work_buffer[0] + work_buffer_bytes);
 	assert(!(m_read_done_offset % hunk_bytes()));
 	uint64_t const end_offset = m_read_done_offset + numbytes;
 

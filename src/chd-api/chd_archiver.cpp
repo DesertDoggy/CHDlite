@@ -339,6 +339,13 @@ struct ChdArchiver::Impl
                                     const chd_codec_type* defaults,
                                     chd_codec_type (&compression)[4])
     {
+        // Explicit uncompressed mode
+        if (options.uncompressed) {
+            for (int i = 0; i < 4; i++)
+                compression[i] = CHD_CODEC_NONE;
+            return;
+        }
+
         // Check if user specified the full 4-slot array
         bool has_array = false;
         for (int i = 0; i < 4; i++) {

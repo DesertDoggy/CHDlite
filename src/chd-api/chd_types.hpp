@@ -319,10 +319,12 @@ struct ArchiveOptions
     // If both are left at defaults, archive() picks smart system-aware codecs.
     Codec       codec = Codec::None;        // None = auto-detect
     Codec       compression[4] = { Codec::None, Codec::None, Codec::None, Codec::None };
+    bool        uncompressed = false;       // true = store raw (no compression)
 
     uint32_t    hunk_bytes = 0;             // 0 = auto (CD: 2448*8, DVD: 2048, HD: 4096 etc.)
     uint32_t    unit_bytes = 0;             // 0 = auto
     int         num_processors = 0;         // 0 = auto (all cores)
+    int         max_concurrent_files = 0;   // 0 = auto; batch: max files processed in parallel
 
     // For CD images: override input format parsing
     std::string input_format;               // "cue", "gdi", "iso", "nrg", "toc"
@@ -347,6 +349,7 @@ struct ArchiveOptions
 
     // Helper: true if user specified no codecs at all (use smart defaults)
     bool has_custom_compression() const {
+        if (uncompressed) return true;
         if (codec != Codec::None) return true;
         for (auto c : compression)
             if (c != Codec::None) return true;

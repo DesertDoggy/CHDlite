@@ -605,26 +605,24 @@ static void block_create_dvd(const TestPaths& tp)
     std::printf(CLR_BOLD "\n=== Block 6: create DVD + options ===" CLR_RST "\n");
     std::string out;
 
-    // 6a) createdvd with -c none (fast: no compression for large ISO)
+    // 6a) createdvd with -c none (currently unsupported — expect clean rejection)
     if (tp.has(tp.ps2_iso))
     {
         std::string dir = (fs::path(tp.out_root) / "b6a").string();
         fs::create_directories(dir);
         std::string chd = (fs::path(dir) / "ps2_none.chd").string();
         int rc = run("createdvd -i \"" + tp.ps2_iso + "\" -o \"" + chd + "\" -c none -f", &out);
-        check(rc == 0, "createdvd -c none exits 0");
-        check(file_exists(chd), "createdvd none produces CHD");
-        check(file_size(chd) > 1024, "createdvd none CHD has content");
+        check(rc != 0, "createdvd -c none rejected");
     }
     else skip("createdvd none", "PS2 ISO not found");
 
-    // 6b) Generic "create" from ISO with -c none (auto-detect DVD)
+    // 6b) Generic "create" from ISO (auto-detect DVD, default compression)
     if (tp.has(tp.ps2_iso))
     {
         std::string dir = (fs::path(tp.out_root) / "b6b").string();
         fs::create_directories(dir);
         std::string chd = (fs::path(dir) / "ps2_auto.chd").string();
-        int rc = run("create \"" + tp.ps2_iso + "\" -o \"" + chd + "\" -c none -f", &out);
+        int rc = run("create \"" + tp.ps2_iso + "\" -o \"" + chd + "\" -f", &out);
         check(rc == 0, "create <ISO> auto DVD exits 0");
         check(file_exists(chd), "create ISO auto produces CHD");
     }

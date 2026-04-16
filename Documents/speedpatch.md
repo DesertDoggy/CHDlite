@@ -388,7 +388,7 @@ concurrent    = min(concurrent, max_by_memory)
 - **Files**: `src/cli/chdlite_cli.cpp` — `cmd_auto_batch()`
 - **Depends on**: Step 14 (wired `-np`)
 
-### Combined Speedup Model
+### Combined Speedup Model(Lenient estimate)
 
 ```
 Single file:

@@ -154,9 +154,19 @@ struct TestPaths
     std::string dc_chd;      // GD-ROM
     std::string psp_chd;     // DVD/ISO
 
-    // Non-CHD for create tests
-    std::string pce_cue;
-    std::string ps2_iso;
+    // Non-CHD for create/read tests
+    std::string pce_cue;     // PCEngine CUE
+    std::string ps1_cue;     // PS1 CUE
+    std::string saturn_cue;  // Saturn CUE
+    std::string ps2_iso;     // PS2 ISO
+    std::string psp_iso;     // PSP ISO
+    std::string dc_gdi;      // Dreamcast GDI
+
+    // Specific .bin files (some are part of a sheet — used to test skip behavior)
+    std::string pce_data_bin;  // PCEngine Track 02 (data) — part of .cue
+    std::string ps1_bin;       // PS1 single .bin — part of .cue
+    std::string dc_bin01;      // Dreamcast track 01 .bin — part of .gdi
+    std::string dc_bin03;      // Dreamcast track 03 .bin — part of .gdi
 
     bool has(const std::string& p) const { return !p.empty() && fs::exists(p); }
 };
@@ -183,7 +193,25 @@ static TestPaths discover_paths(const std::string& root)
     tp.dc_chd     = find("Dreamcast", ".chd");
     tp.psp_chd    = find("PSP", ".chd");
     tp.pce_cue    = find("PCEngine", ".cue");
+    tp.ps1_cue    = find("PS1", ".cue");
+    tp.saturn_cue = find("Saturn", ".cue");
     tp.ps2_iso    = find("PS2", ".iso");
+    tp.psp_iso    = find("PSP", ".iso");
+    tp.dc_gdi     = find("Dreamcast", ".gdi");
+
+    // Specific bins — find by exact name fragment
+    auto find_specific = [&](const std::string& subdir, const std::string& name_fragment) -> std::string {
+        std::string dir = root + "/" + subdir;
+        if (!fs::exists(dir)) return {};
+        for (auto& e : fs::directory_iterator(dir))
+            if (e.path().filename().string().find(name_fragment) != std::string::npos)
+                return e.path().string();
+        return {};
+    };
+    tp.pce_data_bin = find_specific("PCEngine", "Track 02");
+    tp.ps1_bin      = find_specific("PS1", ".bin");
+    tp.dc_bin01     = find_specific("Dreamcast", "01.bin");
+    tp.dc_bin03     = find_specific("Dreamcast", "03.bin");
 
     return tp;
 }
@@ -227,10 +255,85 @@ static void block_read(const TestPaths& tp)
     }
     else skip("read GD-ROM", "Dreamcast CHD not found");
 
-    // 1d) No input → error
+    // 1d) Non-CHD: CUE file (PCEngine)
+    if (tp.has(tp.pce_cue))
+    {
+        int rc = run("read \"" + tp.pce_cue + "\"", &out);
+        check(rc == 0, "read .cue exits 0");
+        check(contains(out, "Format:"), "read .cue shows Format");
+    }
+    else skip("read .cue", "PCEngine CUE not found");
+
+    // 1e) Non-CHD: GDI file (Dreamcast)
+    if (tp.has(tp.dc_gdi))
+    {
+        int rc = run("read \"" + tp.dc_gdi + "\"", &out);
+        check(rc == 0, "read .gdi exits 0");
+        check(contains(out, "Format:"), "read .gdi shows Format");
+        check(contains(out, "Dreamcast"), "read .gdi detects Dreamcast");
+    }
+    else skip("read .gdi", "Dreamcast GDI not found");
+
+    // 1f) Non-CHD: ISO file (PS2)
+    if (tp.has(tp.ps2_iso))
+    {
+        int rc = run("read \"" + tp.ps2_iso + "\"", &out);
+        check(rc == 0, "read .iso exits 0");
+        check(contains(out, "Platform:") && contains(out, "PlayStation 2"), "read .iso detects PS2");
+    }
+    else skip("read .iso", "PS2 ISO not found");
+
+    // 1g) Non-CHD: ISO file (PSP)
+    if (tp.has(tp.psp_iso))
+    {
+        int rc = run("read \"" + tp.psp_iso + "\"", &out);
+        check(rc == 0, "read PSP .iso exits 0");
+        check(contains(out, "PSP"), "read .iso detects PSP");
+    }
+    else skip("read PSP .iso", "PSP ISO not found");
+
+    // 1h) No input → error
     {
         int rc = run("read", &out);
         check(rc != 0, "read with no input returns error");
+    }
+}
+
+// ======================> Block 1b: read .bin files directly
+
+static void block_read_bins(const TestPaths& tp)
+{
+    std::printf(CLR_BOLD "\n=== Block 1b: read .bin files ===" CLR_RST "\n");
+    std::string out;
+
+    // Bins that are part of a .cue/.gdi — expect "Skipped:" redirect message
+    struct BinCase {
+        const std::string& path;
+        const char* label;
+        const char* sheet_ext;  // expected sheet extension in redirect msg
+    };
+    std::vector<BinCase> sheet_bins = {
+        { tp.pce_data_bin, "PCEngine Track 02 .bin (in .cue)", ".cue" },
+        { tp.ps1_bin,      "PS1 .bin (in .cue)",               ".cue" },
+        { tp.dc_bin01,     "Dreamcast 01.bin (in .gdi)",        ".gdi" },
+        { tp.dc_bin03,     "Dreamcast 03.bin (in .gdi)",        ".gdi" },
+    };
+    for (auto& c : sheet_bins)
+    {
+        if (tp.has(c.path))
+        {
+            int rc = run("read \"" + c.path + "\"", &out);
+            std::string d0 = std::string(c.label) + " exits 0";
+            std::string d1 = std::string(c.label) + " shows Skipped message";
+            std::string d2 = std::string(c.label) + " names sheet file";
+            check(rc == 0, d0.c_str());
+            check(contains(out, "Skipped:"), d1.c_str());
+            check(contains(out, c.sheet_ext), d2.c_str());
+        }
+        else {
+            std::string d = std::string("read ") + c.label;
+            skip(d.c_str(), "file not found");
+        }
     }
 }
 
@@ -670,9 +773,12 @@ int main(int argc, char** argv)
 {
     // Default paths
     std::string chd_root = "test_root/Roms/DiscRomsChd";
+    std::string out_root  = "test_root/output/cli_test_output";
     if (argc > 1) chd_root = argv[1];
+    if (argc > 2) out_root  = argv[2];
 
     auto tp = discover_paths(chd_root);
+    tp.out_root = out_root;
 
     std::printf(CLR_BOLD "chdlite CLI integration test" CLR_RST "\n");
     std::printf("CHD root: %s\n", tp.chd_root.c_str());
@@ -687,6 +793,7 @@ int main(int argc, char** argv)
 
     // Run all blocks
     block_read(tp);
+    block_read_bins(tp);
     block_hash(tp);
     block_extract_cd(tp);
     block_extract_dvd(tp);

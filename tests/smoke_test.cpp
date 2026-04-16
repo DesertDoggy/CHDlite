@@ -138,7 +138,7 @@ static const RefHash* find_ref_hash(const std::string& name)
     return nullptr;
 }
 
-static TestResult test_one_chd(const std::string& chd_path, const std::string& output_dir)
+static TestResult test_one_chd(const std::string& chd_path, const std::string& output_dir, bool skip_extract = false, bool skip_hash = false)
 {
     TestResult tr;
     tr.chd_path = chd_path;
@@ -203,34 +203,37 @@ static TestResult test_one_chd(const std::string& chd_path, const std::string& o
         hdr.content_type == chdlite::ContentType::DVD)
     {
         // Normal detection (all loops, with title)
-        auto det_all = reader.detect_system(chdlite::DetectFlags::All, true);
-        log_print("  System (all):    %s\n", chdlite::system_name(det_all.system));
+        auto det_all = reader.detect_game_platform(chdlite::DetectFlags::All, true);
+        log_print("  System (all):    %s\n", chdlite::game_platform_name(det_all.game_platform));
         if (!det_all.title.empty())
             log_print("  Title:           %s\n", det_all.title.c_str());
-        if (!det_all.game_id.empty())
-            log_print("  Game ID:         %s\n", det_all.game_id.c_str());
+        if (!det_all.manufacturer_id.empty())
+            log_print("  Game ID:         %s\n", det_all.manufacturer_id.c_str());
 
         // Backup-only: skip sector 0 magic, run ISO 9660 + heuristic only
         auto backup_flags = chdlite::DetectFlags::Iso9660 | chdlite::DetectFlags::Heuristic;
-        auto det_backup = reader.detect_system(backup_flags);
-        log_print("  System (backup): %s\n", chdlite::system_name(det_backup.system));
+        auto det_backup = reader.detect_game_platform(backup_flags);
+        log_print("  System (backup): %s\n", chdlite::game_platform_name(det_backup.game_platform));
 
         // For platforms detected via sector 0 (3DO, MegaCD, Saturn, Dreamcast on CD),
         // backup may legitimately differ (fall to GenericCD). Log the comparison.
-        if (det_all.system != det_backup.system) {
+        if (det_all.game_platform != det_backup.game_platform) {
             // Expected: sector-0-only platforms won't match in backup mode
-            bool expected_diff = (det_all.system == chdlite::CdSystem::ThreeDO ||
-                                  det_all.system == chdlite::CdSystem::MegaCD ||
-                                  det_all.system == chdlite::CdSystem::Saturn ||
-                                  (det_all.system == chdlite::CdSystem::Dreamcast &&
+            bool expected_diff = (det_all.game_platform == chdlite::GamePlatform::ThreeDO ||
+                                  det_all.game_platform == chdlite::GamePlatform::MegaCD ||
+                                  det_all.game_platform == chdlite::GamePlatform::Saturn ||
+                                  (det_all.game_platform == chdlite::GamePlatform::Dreamcast &&
                                    hdr.content_type == chdlite::ContentType::GDROM));
             log_print("  System diff: %s (all=%s backup=%s)\n",
                 expected_diff ? "EXPECTED" : "UNEXPECTED",
-                chdlite::system_name(det_all.system), chdlite::system_name(det_backup.system));
+                chdlite::game_platform_name(det_all.game_platform), chdlite::game_platform_name(det_backup.game_platform));
         }
     }
 
     // --- Content hashing ---
+    if (skip_hash) {
+        log_print("  Hashing content... SKIPPED\n");
+    } else {
     log_print("  Hashing content...\n");
     {
         auto t0h = std::chrono::steady_clock::now();
@@ -329,8 +332,14 @@ static TestResult test_one_chd(const std::string& chd_path, const std::string& o
             log_print("  HASH FAILED: %s\n", hash_result.error_message.c_str());
         }
     }
+    } // end skip_hash
 
     reader.close();
+
+    if (skip_extract) {
+        log_print("  Extracting... SKIPPED\n");
+        return tr;
+    }
 
     // --- Extractor ---
     log_print("  Extracting...\n");
@@ -374,9 +383,16 @@ int main(int argc, char* argv[])
     std::string output_dir = "test_root/output";
 
     std::string filter;
-    if (argc >= 2) rom_dir = argv[1];
-    if (argc >= 3) output_dir = argv[2];
-    if (argc >= 4) filter = argv[3];
+    bool skip_extract = false;
+    bool skip_hash = false;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--no-extract") { skip_extract = true; }
+        else if (arg == "--no-hash") { skip_hash = true; }
+        else if (rom_dir == "test_root/Roms/DiscRomsChd") { rom_dir = arg; }
+        else if (output_dir == "test_root/output") { output_dir = arg; }
+        else { filter = arg; }
+    }
 
     // Setup output dir and log file
     fs::create_directories(output_dir);
@@ -413,7 +429,7 @@ int main(int argc, char* argv[])
     // Run tests
     std::vector<TestResult> results;
     for (const auto& chd : chd_files)
-        results.push_back(test_one_chd(chd, output_dir));
+        results.push_back(test_one_chd(chd, output_dir, skip_extract, skip_hash));
 
     // Summary
     int pass_read = 0, pass_extract = 0, pass_hash = 0, fail = 0;
@@ -422,7 +438,7 @@ int main(int argc, char* argv[])
         if (r.read_ok) pass_read++;
         if (r.extract_ok) pass_extract++;
         if (r.hash_ok) pass_hash++;
-        if (!r.read_ok || !r.extract_ok) fail++;
+        if (!r.read_ok || (!skip_extract && !r.extract_ok)) fail++;
         total_tracks_matched += r.hash_tracks_matched;
         total_tracks += r.hash_tracks_total;
     }
@@ -446,7 +462,7 @@ int main(int argc, char* argv[])
 
     // --- Hash flags & output format tests ---
     // Use the first CHD found for targeted hash testing
-    if (!chd_files.empty()) {
+    if (!skip_hash && !chd_files.empty()) {
         const std::string& test_chd = chd_files.front();
         std::string stem = fs::path(test_chd).stem().string();
         log_print("\n========================================\n");

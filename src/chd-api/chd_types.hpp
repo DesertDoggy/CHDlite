@@ -81,7 +81,7 @@ enum class HashOutputFormat
 
 // ======================> CD system detection for smart codec defaults
 
-enum class CdSystem
+enum class GamePlatform
 {
     Unknown,
     PS1,
@@ -215,9 +215,9 @@ struct ArchiveResult
     uint64_t    input_bytes;
     uint64_t    output_bytes;
     double      compression_ratio;
-    CdSystem    detected_system;
+    GamePlatform    detected_game_platform;
     std::string detected_title;    // game title (populated when detect_title is true)
-    std::string detected_gameid;   // product/serial number (populated when detect_title is true)
+    std::string detected_manufacturer_id;   // product/serial number (populated when detect_title is true)
     Codec       codec_used;
 };
 

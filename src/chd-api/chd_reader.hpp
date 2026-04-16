@@ -6,7 +6,7 @@
 #define CHDLITE_CHD_READER_HPP
 
 #include "chd_types.hpp"
-#include "detect_system.hpp"
+#include "detect_game_platform.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -44,9 +44,9 @@ public:
     bool read_sector(uint32_t lba, void* buffer, TrackType type) const;
 
     // Platform/system detection (CD/GD/DVD content)
-    DetectionResult detect_system(DetectFlags flags = DetectFlags::All, bool detect_title = false) const
+    DetectionResult detect_game_platform(DetectFlags flags = DetectFlags::All, bool detect_title = false) const
     {
-        return chdlite::detect_system(*this, flags, detect_title);
+        return chdlite::detect_game_platform(*this, flags, detect_title);
     }
 
     // Hash operations - compute from actual extracted content data

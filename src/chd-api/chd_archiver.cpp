@@ -4,7 +4,7 @@
 
 #include "chd_archiver.hpp"
 #include "chd_reader.hpp"
-#include "detect_system.hpp"
+#include "detect_game_platform.hpp"
 
 #include "chd.h"
 #include "cdrom.h"
@@ -140,9 +140,9 @@ static const chd_codec_type s_smart_cd_compression[4] =
 
 // Pick the best default compression array based on detected system and content format.
 // Returns null if no smart default applies (caller falls back to chdman legacy defaults).
-static const chd_codec_type* smart_compression_for(CdSystem system, const std::string& format)
+static const chd_codec_type* smart_compression_for(GamePlatform system, const std::string& format)
 {
-    if (system == CdSystem::PS2) {
+    if (system == GamePlatform::PS2) {
         if (format == "dvd")
             return s_ps2_dvd_compression;
         else
@@ -156,7 +156,7 @@ static const chd_codec_type* smart_compression_for(CdSystem system, const std::s
 }
 
 // Pick the default hunk size based on system and format (0 = let each archive_* decide)
-static uint32_t smart_hunk_for(CdSystem system, const std::string& format)
+static uint32_t smart_hunk_for(GamePlatform system, const std::string& format)
 {
     if (format == "dvd")
         return 2048;  // 1 DVD sector per hunk
@@ -697,7 +697,7 @@ ArchiveResult ChdArchiver::archive(const std::string& input_path,
     // Apply smart defaults when user hasn't specified codecs
     ArchiveOptions effective = options;
     if (!options.has_custom_compression()) {
-        const chd_codec_type* smart = smart_compression_for(detection.system, smart_fmt);
+        const chd_codec_type* smart = smart_compression_for(detection.game_platform, smart_fmt);
         if (smart) {
             // Convert mame codec types back to our Codec enum for the effective options
             // Actually, we'll inject them directly in the archive_* calls via a different path.
@@ -722,7 +722,7 @@ ArchiveResult ChdArchiver::archive(const std::string& input_path,
 
     // Apply smart hunk size when user hasn't specified one
     if (effective.hunk_bytes == 0) {
-        uint32_t smart_hunk = smart_hunk_for(detection.system, fmt);
+        uint32_t smart_hunk = smart_hunk_for(detection.game_platform, fmt);
         if (smart_hunk > 0)
             effective.hunk_bytes = smart_hunk;
     }
@@ -737,14 +737,14 @@ ArchiveResult ChdArchiver::archive(const std::string& input_path,
         result = archive_raw(input_path, output_path, effective);
 
     // Populate detection results
-    result.detected_system = detection.system;
+    result.detected_game_platform = detection.game_platform;
     result.detected_title = detection.title;
-    result.detected_gameid = detection.game_id;
+    result.detected_manufacturer_id = detection.manufacturer_id;
 
     // Rename output to title or game ID if requested and successful
     std::string rename_label;
-    if (result.success && options.rename_to_gameid && !detection.game_id.empty())
-        rename_label = sanitize_filename(detection.game_id);
+    if (result.success && options.rename_to_gameid && !detection.manufacturer_id.empty())
+        rename_label = sanitize_filename(detection.manufacturer_id);
     else if (result.success && options.rename_to_title && !detection.title.empty())
         rename_label = sanitize_filename(detection.title);
 

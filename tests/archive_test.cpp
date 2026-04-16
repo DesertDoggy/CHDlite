@@ -221,9 +221,9 @@ int main(int argc, char* argv[])
         std::printf("  Archive OK (%.1fs)  %llu -> %llu bytes (%.1f%%)\n",
                     arch_sec, (unsigned long long)ar.input_bytes,
                     (unsigned long long)ar.output_bytes, ratio);
-        std::printf("  System: %s", chdlite::system_name(ar.detected_system));
+        std::printf("  System: %s", chdlite::game_platform_name(ar.detected_game_platform));
         if (!ar.detected_title.empty())  std::printf("  Title: %s", ar.detected_title.c_str());
-        if (!ar.detected_gameid.empty()) std::printf("  ID: %s", ar.detected_gameid.c_str());
+        if (!ar.detected_manufacturer_id.empty()) std::printf("  ID: %s", ar.detected_manufacturer_id.c_str());
         std::printf("\n");
 
         // Print CHD header info

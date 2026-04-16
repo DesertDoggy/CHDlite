@@ -2,7 +2,7 @@
 // CHDlite - Cross-platform CHD library
 // detect_system.cpp - Platform auto-detection implementation
 
-#include "detect_system.hpp"
+#include "detect_game_platform.hpp"
 #include "chd_reader.hpp"
 
 #include "cdrom.h"
@@ -242,111 +242,117 @@ static std::string iso_read_file(const SectorReader& read_sector, const Iso9660P
 
 // ======================> Sector 0 magic checks
 
-static CdSystem check_3do(const uint8_t* sector0)
+static GamePlatform check_3do(const uint8_t* sector0)
 {
     if (sector0[0] == 0x01 &&
         sector0[1] == 0x5A && sector0[2] == 0x5A && sector0[3] == 0x5A &&
         sector0[4] == 0x5A && sector0[5] == 0x5A &&
         sector0[6] == 0x01)
-        return CdSystem::ThreeDO;
-    return CdSystem::Unknown;
+        return GamePlatform::ThreeDO;
+    return GamePlatform::Unknown;
 }
 
-static CdSystem check_megacd(const uint8_t* sector0)
+static GamePlatform check_megacd(const uint8_t* sector0)
 {
     if (std::memcmp(sector0, "SEGADISCSYSTEM", 14) == 0 ||
         std::memcmp(sector0, "SEGABOOTDISC",   12) == 0 ||
         std::memcmp(sector0, "SEGADISC",        8) == 0 ||
         std::memcmp(sector0, "SEGADATADISC",   12) == 0)
-        return CdSystem::MegaCD;
-    return CdSystem::Unknown;
+        return GamePlatform::MegaCD;
+    return GamePlatform::Unknown;
 }
 
-static CdSystem check_saturn(const uint8_t* sector0)
+static GamePlatform check_saturn(const uint8_t* sector0)
 {
     if (std::memcmp(sector0, "SEGA SEGASATURN ", 16) == 0)
-        return CdSystem::Saturn;
-    return CdSystem::Unknown;
+        return GamePlatform::Saturn;
+    return GamePlatform::Unknown;
 }
 
-static CdSystem check_dreamcast(const uint8_t* sector0)
+static GamePlatform check_dreamcast(const uint8_t* sector0)
 {
     if (std::memcmp(sector0, "SEGA SEGAKATANA ", 16) == 0)
-        return CdSystem::Dreamcast;
-    return CdSystem::Unknown;
+        return GamePlatform::Dreamcast;
+    return GamePlatform::Unknown;
 }
 
 // ======================> ISO 9660 filesystem-based checks
 
-static CdSystem check_ps1_ps2(const SectorReader& read_sector, const Iso9660Pvd& pvd)
+static GamePlatform check_ps1_ps2(const SectorReader& read_sector, const Iso9660Pvd& pvd)
 {
     std::string cnf = iso_read_file(read_sector, pvd, "SYSTEM.CNF");
-    if (cnf.empty()) return CdSystem::Unknown;
+    if (cnf.empty()) return GamePlatform::Unknown;
 
     if (cnf.find("BOOT2") != std::string::npos)
-        return CdSystem::PS2;
+        return GamePlatform::PS2;
     if (cnf.find("BOOT") != std::string::npos)
-        return CdSystem::PS1;
+        return GamePlatform::PS1;
 
-    return CdSystem::Unknown;
+    return GamePlatform::Unknown;
 }
 
-static CdSystem check_psp(const SectorReader& read_sector, const Iso9660Pvd& pvd)
+static GamePlatform check_psp(const SectorReader& read_sector, const Iso9660Pvd& pvd)
 {
     if (iso_file_exists(read_sector, pvd, "PSP_GAME/PARAM.SFO"))
-        return CdSystem::PSP;
-    return CdSystem::Unknown;
+        return GamePlatform::PSP;
+    return GamePlatform::Unknown;
 }
 
-static CdSystem check_neogeocd(const SectorReader& read_sector, const Iso9660Pvd& pvd)
+static GamePlatform check_neogeocd(const SectorReader& read_sector, const Iso9660Pvd& pvd)
 {
     if (iso_file_exists(read_sector, pvd, "IPL.TXT"))
-        return CdSystem::NeoGeoCD;
-    return CdSystem::Unknown;
+        return GamePlatform::NeoGeoCD;
+    return GamePlatform::Unknown;
 }
 
-static CdSystem check_dvd_video(const SectorReader& read_sector, const Iso9660Pvd& pvd)
+static GamePlatform check_dvd_video(const SectorReader& read_sector, const Iso9660Pvd& pvd)
 {
     if (iso_file_exists(read_sector, pvd, "VIDEO_TS/VIDEO_TS.IFO"))
-        return CdSystem::DVDISO;
-    return CdSystem::Unknown;
+        return GamePlatform::DVDISO;
+    return GamePlatform::Unknown;
 }
 
 // ======================> PC Engine CD heuristic
 
-static CdSystem check_pcengine(const SectorReader& read_sector, const std::vector<TrackInfo>& tracks)
+static GamePlatform check_pcengine(const SectorReader& read_sector, const std::vector<TrackInfo>& tracks)
 {
     // PC Engine CD: Track 1 = Audio, Track 2 = Data
     if (tracks.size() < 2)
-        return CdSystem::Unknown;
+        return GamePlatform::Unknown;
     if (!tracks[0].is_audio)
-        return CdSystem::Unknown;
+        return GamePlatform::Unknown;
     if (tracks[1].is_audio)
-        return CdSystem::Unknown;
+        return GamePlatform::Unknown;
 
     uint32_t data_lba = tracks[1].start_lba;
     uint8_t sector[2048];
 
     if (!read_sector(data_lba + 1, sector))
-        return CdSystem::Unknown;
+        return GamePlatform::Unknown;
 
+    // Primary check: IPL header magic at byte 32
+    // http://shu.sheldows.com/shu/download/pcedocs/pce_cdrom.html
+    if (std::memcmp("PC Engine CD-ROM SYSTEM", &sector[32], 23) == 0)
+        return GamePlatform::PCEngine;
+
+    // Fallback heuristic: validate IPL header fields
     uint8_t  iplbln = sector[0x03];
     uint16_t iplsta = read_le16(&sector[0x04]);
     uint16_t ipljmp = read_le16(&sector[0x06]);
 
     if (iplbln == 0)
-        return CdSystem::Unknown;
+        return GamePlatform::Unknown;
     if (iplsta < 0x2000)
-        return CdSystem::Unknown;
+        return GamePlatform::Unknown;
     if (ipljmp == 0)
-        return CdSystem::Unknown;
+        return GamePlatform::Unknown;
 
     for (int i = 0; i < 5; i++) {
         if (sector[0x08 + i] > 0x7F)
-            return CdSystem::Unknown;
+            return GamePlatform::Unknown;
     }
 
-    return CdSystem::PCEngine;
+    return GamePlatform::PCEngine;
 }
 
 // ======================> Title extraction
@@ -359,35 +365,15 @@ static std::string trim_right(const std::string& s)
 }
 
 // Extract game title based on detected system
-static std::string extract_title(const SectorReader& read_sector, CdSystem system,
-                                 const Iso9660Pvd& pvd)
+static std::string extract_title(const SectorReader& read_sector, GamePlatform system,
+                                 const Iso9660Pvd& pvd, uint32_t data_lba = 0)
 {
     switch (system) {
-    case CdSystem::PS1:
-    case CdSystem::PS2: {
-        // SYSTEM.CNF contains BOOT line with game ID (e.g. "SLPS_123.45")
-        std::string cnf = iso_read_file(read_sector, pvd, "SYSTEM.CNF");
-        if (!cnf.empty()) {
-            // Look for the boot path: "cdrom:\SLPS_123.45;1" or "cdrom0:\SLPS_123.45;1"
-            std::string boot_key = (system == CdSystem::PS2) ? "BOOT2" : "BOOT";
-            auto pos = cnf.find(boot_key);
-            if (pos != std::string::npos) {
-                // Find the backslash or colon before the game ID
-                auto bs = cnf.find('\\', pos);
-                if (bs == std::string::npos) bs = cnf.find(':', pos);
-                if (bs != std::string::npos) {
-                    auto start = bs + 1;
-                    auto semi = cnf.find(';', start);
-                    auto nl = cnf.find_first_of("\r\n", start);
-                    auto end = std::min(semi, nl);
-                    if (end != std::string::npos && end > start)
-                        return trim_right(cnf.substr(start, end - start));
-                }
-            }
-        }
+    case GamePlatform::PS1:
+    case GamePlatform::PS2:
+        // No title field on PS1/PS2 discs — SYSTEM.CNF only contains the boot executable ID
         break;
-    }
-    case CdSystem::PSP: {
+    case GamePlatform::PSP: {
         // PARAM.SFO is a binary key-value store
         std::string sfo = iso_read_file(read_sector, pvd, "PSP_GAME/PARAM.SFO", 16384);
         if (sfo.size() >= 20) {
@@ -418,7 +404,7 @@ static std::string extract_title(const SectorReader& read_sector, CdSystem syste
         }
         break;
     }
-    case CdSystem::Saturn: {
+    case GamePlatform::Saturn: {
         // Saturn header at sector 0: title at offset 0x60, 112 bytes (Shift-JIS)
         uint8_t sector0[2048];
         if (read_sector(0, sector0)) {
@@ -429,7 +415,7 @@ static std::string extract_title(const SectorReader& read_sector, CdSystem syste
         }
         break;
     }
-    case CdSystem::MegaCD: {
+    case GamePlatform::MegaCD: {
         // Mega CD header at sector 0: domestic name at offset 0x120, 48 bytes
         uint8_t sector0[2048];
         if (read_sector(0, sector0)) {
@@ -440,7 +426,7 @@ static std::string extract_title(const SectorReader& read_sector, CdSystem syste
         }
         break;
     }
-    case CdSystem::Dreamcast: {
+    case GamePlatform::Dreamcast: {
         // Dreamcast IP.BIN: title at offset 0x80, 128 bytes
         uint8_t sector0[2048];
         if (read_sector(0, sector0)) {
@@ -451,7 +437,7 @@ static std::string extract_title(const SectorReader& read_sector, CdSystem syste
         }
         break;
     }
-    case CdSystem::ThreeDO: {
+    case GamePlatform::ThreeDO: {
         // 3DO Opera header: volume label at offset 0x28, 32 bytes
         uint8_t sector0[2048];
         if (read_sector(0, sector0)) {
@@ -462,7 +448,7 @@ static std::string extract_title(const SectorReader& read_sector, CdSystem syste
         }
         break;
     }
-    case CdSystem::NeoGeoCD: {
+    case GamePlatform::NeoGeoCD: {
         // IPL.TXT often has title info; fallback to volume ID
         std::string ipl = iso_read_file(read_sector, pvd, "IPL.TXT", 1024);
         if (!ipl.empty()) {
@@ -475,11 +461,23 @@ static std::string extract_title(const SectorReader& read_sector, CdSystem syste
         }
         break;
     }
+    case GamePlatform::PCEngine: {
+        // PC Engine IPL header in sector data_lba+1:
+        // "PC Engine CD-ROM SYSTEM" at byte 32, title at bytes 106-127 (22 bytes)
+        // http://shu.sheldows.com/shu/download/pcedocs/pce_cdrom.html
+        uint8_t sector1[2048];
+        if (read_sector(data_lba + 1, sector1)) {
+            if (std::memcmp("PC Engine CD-ROM SYSTEM", &sector1[32], 23) == 0) {
+                std::string title(reinterpret_cast<const char*>(&sector1[106]), 22);
+                title = trim_right(title);
+                if (!title.empty()) return title;
+            }
+        }
+        break;
+    }
     default:
         break;
     }
-
-    // Fallback: ISO 9660 volume ID
     if (pvd.valid) {
         std::string vid = trim_right(std::string(pvd.volume_id));
         if (!vid.empty())
@@ -490,16 +488,16 @@ static std::string extract_title(const SectorReader& read_sector, CdSystem syste
 }
 
 // Extract product/serial number (game ID) based on detected system
-static std::string extract_game_id(const SectorReader& read_sector, CdSystem system,
-                                   const Iso9660Pvd& pvd)
+static std::string extract_manufacturer_id(const SectorReader& read_sector, GamePlatform system,
+                                   const Iso9660Pvd& pvd, uint32_t data_lba = 0)
 {
     switch (system) {
-    case CdSystem::PS1:
-    case CdSystem::PS2: {
+    case GamePlatform::PS1:
+    case GamePlatform::PS2: {
         // Same as title — game ID from SYSTEM.CNF (e.g. SCPS_100.50, SLPM_655.55)
         std::string cnf = iso_read_file(read_sector, pvd, "SYSTEM.CNF");
         if (!cnf.empty()) {
-            std::string boot_key = (system == CdSystem::PS2) ? "BOOT2" : "BOOT";
+            std::string boot_key = (system == GamePlatform::PS2) ? "BOOT2" : "BOOT";
             auto pos = cnf.find(boot_key);
             if (pos != std::string::npos) {
                 auto bs = cnf.find('\\', pos);
@@ -516,7 +514,7 @@ static std::string extract_game_id(const SectorReader& read_sector, CdSystem sys
         }
         break;
     }
-    case CdSystem::PSP: {
+    case GamePlatform::PSP: {
         // DISC_ID from PARAM.SFO (e.g. ULJM05325)
         std::string sfo = iso_read_file(read_sector, pvd, "PSP_GAME/PARAM.SFO", 16384);
         if (sfo.size() >= 20) {
@@ -545,7 +543,7 @@ static std::string extract_game_id(const SectorReader& read_sector, CdSystem sys
         }
         break;
     }
-    case CdSystem::Saturn: {
+    case GamePlatform::Saturn: {
         // Product number at sector 0 offset 0x20, 10 bytes
         uint8_t sector0[2048];
         if (read_sector(0, sector0)) {
@@ -555,7 +553,7 @@ static std::string extract_game_id(const SectorReader& read_sector, CdSystem sys
         }
         break;
     }
-    case CdSystem::Dreamcast: {
+    case GamePlatform::Dreamcast: {
         // Product number at IP.BIN offset 0x40, 10 bytes
         uint8_t sector0[2048];
         if (read_sector(0, sector0)) {
@@ -565,7 +563,7 @@ static std::string extract_game_id(const SectorReader& read_sector, CdSystem sys
         }
         break;
     }
-    case CdSystem::MegaCD: {
+    case GamePlatform::MegaCD: {
         // Serial at sector 0 offset 0x183, 11 bytes (after "GM " at 0x180)
         uint8_t sector0[2048];
         if (read_sector(0, sector0)) {
@@ -581,12 +579,12 @@ static std::string extract_game_id(const SectorReader& read_sector, CdSystem sys
     return {};
 }
 
-// Helper: fill both title and game_id in a DetectionResult
-static void fill_metadata(const SectorReader& read_sector, CdSystem system,
-                          const Iso9660Pvd& pvd, DetectionResult& result)
+// Helper: fill both title and manufacturer_id in a DetectionResult
+static void fill_metadata(const SectorReader& read_sector, GamePlatform system,
+                          const Iso9660Pvd& pvd, DetectionResult& result, uint32_t data_lba = 0)
 {
-    result.title   = extract_title(read_sector, system, pvd);
-    result.game_id = extract_game_id(read_sector, system, pvd);
+    result.title   = extract_title(read_sector, system, pvd, data_lba);
+    result.manufacturer_id = extract_manufacturer_id(read_sector, system, pvd, data_lba);
 }
 
 // ======================> Raw file helpers
@@ -674,7 +672,7 @@ static uint32_t detect_sector_size(std::ifstream& file, uint64_t file_size)
 
 // ======================> Core detection (SectorReader-based)
 
-DetectionResult detect_system(const SectorReader& read_sector,
+DetectionResult detect_game_platform(const SectorReader& read_sector,
                               ContentType content_type,
                               const std::vector<TrackInfo>& tracks,
                               DetectFlags flags,
@@ -684,15 +682,15 @@ DetectionResult detect_system(const SectorReader& read_sector,
 
     // ===== GD-ROM path: always Dreamcast =====
     if (content_type == ContentType::GDROM) {
-        result.system = CdSystem::Dreamcast;
+        result.game_platform = GamePlatform::Dreamcast;
         if (has_detect_flag(flags, DetectFlags::Sector0)) {
             // Verify with header check on last data track
             for (int i = static_cast<int>(tracks.size()) - 1; i >= 0; i--) {
                 if (!tracks[i].is_audio) {
                     uint8_t sector[2048];
                     if (read_sector(tracks[i].start_lba, sector)) {
-                        if (check_dreamcast(sector) != CdSystem::Unknown) {
-                            result.system = CdSystem::Dreamcast;
+                        if (check_dreamcast(sector) != GamePlatform::Unknown) {
+                            result.game_platform = GamePlatform::Dreamcast;
                         }
                     }
                     break;
@@ -701,7 +699,7 @@ DetectionResult detect_system(const SectorReader& read_sector,
         }
         if (detect_title) {
             Iso9660Pvd pvd;  // GD-ROM title from header, not ISO
-            fill_metadata(read_sector, result.system, pvd, result);
+            fill_metadata(read_sector, result.game_platform, pvd, result);
         }
         return result;
     }
@@ -712,23 +710,23 @@ DetectionResult detect_system(const SectorReader& read_sector,
         if (has_detect_flag(flags, DetectFlags::Iso9660)) {
             Iso9660Pvd pvd = read_pvd(read_sector);
             if (pvd.valid) {
-                CdSystem sys;
+                GamePlatform sys;
 
                 sys = check_psp(read_sector, pvd);
-                if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
+                if (sys != GamePlatform::Unknown) { result.game_platform = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
 
                 sys = check_ps1_ps2(read_sector, pvd);
-                if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
+                if (sys != GamePlatform::Unknown) { result.game_platform = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
 
                 sys = check_dvd_video(read_sector, pvd);
-                if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
+                if (sys != GamePlatform::Unknown) { result.game_platform = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
 
                 // No system match but valid ISO — use volume ID as title
                 if (detect_title)
-                    fill_metadata(read_sector, CdSystem::DVDISO, pvd, result);
+                    fill_metadata(read_sector, GamePlatform::DVDISO, pvd, result);
             }
         }
-        result.system = CdSystem::DVDISO;
+        result.game_platform = GamePlatform::DVDISO;
         return result;
     }
 
@@ -752,32 +750,32 @@ DetectionResult detect_system(const SectorReader& read_sector,
             if (has_detect_flag(flags, DetectFlags::Sector0)) {
                 uint8_t sector0[2048];
                 if (read_sector(data_lba, sector0)) {
-                    CdSystem sys;
+                    GamePlatform sys;
 
                     sys = check_3do(sector0);
-                    if (sys != CdSystem::Unknown) {
-                        result.system = sys;
+                    if (sys != GamePlatform::Unknown) {
+                        result.game_platform = sys;
                         if (detect_title) { Iso9660Pvd pvd; fill_metadata(read_sector, sys, pvd, result); }
                         return result;
                     }
 
                     sys = check_megacd(sector0);
-                    if (sys != CdSystem::Unknown) {
-                        result.system = sys;
+                    if (sys != GamePlatform::Unknown) {
+                        result.game_platform = sys;
                         if (detect_title) { Iso9660Pvd pvd; fill_metadata(read_sector, sys, pvd, result); }
                         return result;
                     }
 
                     sys = check_saturn(sector0);
-                    if (sys != CdSystem::Unknown) {
-                        result.system = sys;
+                    if (sys != GamePlatform::Unknown) {
+                        result.game_platform = sys;
                         if (detect_title) { Iso9660Pvd pvd; fill_metadata(read_sector, sys, pvd, result); }
                         return result;
                     }
 
                     sys = check_dreamcast(sector0);
-                    if (sys != CdSystem::Unknown) {
-                        result.system = sys;
+                    if (sys != GamePlatform::Unknown) {
+                        result.game_platform = sys;
                         if (detect_title) { Iso9660Pvd pvd; fill_metadata(read_sector, sys, pvd, result); }
                         return result;
                     }
@@ -791,44 +789,44 @@ DetectionResult detect_system(const SectorReader& read_sector,
                     pvd = read_pvd(read_sector, data_lba);
 
                 if (pvd.valid) {
-                    CdSystem sys;
+                    GamePlatform sys;
 
                     sys = check_ps1_ps2(read_sector, pvd);
-                    if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
+                    if (sys != GamePlatform::Unknown) { result.game_platform = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
 
                     sys = check_neogeocd(read_sector, pvd);
-                    if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
+                    if (sys != GamePlatform::Unknown) { result.game_platform = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
 
                     sys = check_psp(read_sector, pvd);
-                    if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
+                    if (sys != GamePlatform::Unknown) { result.game_platform = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
 
                     sys = check_dvd_video(read_sector, pvd);
-                    if (sys != CdSystem::Unknown) { result.system = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
+                    if (sys != GamePlatform::Unknown) { result.game_platform = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
                 }
             }
 
             // --- Loop 3: PC Engine heuristic (after all other checks) ---
             if (has_detect_flag(flags, DetectFlags::Heuristic)) {
-                CdSystem sys = check_pcengine(read_sector, tracks);
-                if (sys != CdSystem::Unknown) {
-                    result.system = sys;
+                GamePlatform sys = check_pcengine(read_sector, tracks);
+                if (sys != GamePlatform::Unknown) {
+                    result.game_platform = sys;
                     if (detect_title) {
                         Iso9660Pvd pvd = read_pvd(read_sector);
                         if (!pvd.valid && data_lba > 0)
                             pvd = read_pvd(read_sector, data_lba);
-                        fill_metadata(read_sector, sys, pvd, result);
+                        fill_metadata(read_sector, sys, pvd, result, data_lba);
                     }
                     return result;
                 }
             }
         }
 
-        result.system = CdSystem::GenericCD;
+        result.game_platform = GamePlatform::GenericCD;
         if (detect_title) {
             Iso9660Pvd pvd = read_pvd(read_sector);
             if (!pvd.valid && data_lba > 0)
                 pvd = read_pvd(read_sector, data_lba);
-            fill_metadata(read_sector, CdSystem::GenericCD, pvd, result);
+            fill_metadata(read_sector, GamePlatform::GenericCD, pvd, result);
         }
         return result;
     }
@@ -838,7 +836,7 @@ DetectionResult detect_system(const SectorReader& read_sector,
 
 // ======================> ChdReader convenience wrapper
 
-DetectionResult detect_system(const ChdReader& reader, DetectFlags flags, bool detect_title)
+DetectionResult detect_game_platform(const ChdReader& reader, DetectFlags flags, bool detect_title)
 {
     ContentType content = reader.detect_content_type();
 
@@ -866,7 +864,7 @@ DetectionResult detect_system(const ChdReader& reader, DetectFlags flags, bool d
         try { tracks = reader.get_tracks(); } catch (...) {}
     }
 
-    return detect_system(sector_reader, content, tracks, flags, detect_title);
+    return detect_game_platform(sector_reader, content, tracks, flags, detect_title);
 }
 
 // ======================> Raw input file detection (pre-archive)
@@ -945,16 +943,22 @@ DetectionResult detect_input(const std::string& input_path, bool detect_title)
         // Simple approach: open files on demand using track_info.
         struct TrackFile {
             std::string path;
-            uint64_t offset;
+            uint64_t offset;      // byte offset to start of INDEX 01 data in the file
             uint32_t sector_size;
             uint32_t start_frame;   // physical frame offset
             uint32_t num_frames;
         };
         std::vector<TrackFile> track_files(toc.numtrks);
         for (uint32_t i = 0; i < toc.numtrks; i++) {
+            uint32_t sector_size = toc.tracks[i].datasize + toc.tracks[i].subsize;
             track_files[i].path = track_info.track[i].fname;
-            track_files[i].offset = track_info.track[i].offset;
-            track_files[i].sector_size = toc.tracks[i].datasize + toc.tracks[i].subsize;
+            // When pgdatasize != 0, the pregap is physically stored in the file before
+            // INDEX 01. MAME returns offset=0 (file start), so we must skip past the pregap.
+            uint64_t pregap_bytes = (toc.tracks[i].pgdatasize != 0)
+                ? static_cast<uint64_t>(toc.tracks[i].pregap) * sector_size
+                : 0;
+            track_files[i].offset = track_info.track[i].offset + pregap_bytes;
+            track_files[i].sector_size = sector_size;
             track_files[i].start_frame = toc.tracks[i].physframeofs;
             track_files[i].num_frames = toc.tracks[i].frames;
         }
@@ -1018,9 +1022,10 @@ DetectionResult detect_input(const std::string& input_path, bool detect_title)
             return true;
         };
 
-        auto det = detect_system(sector_reader, ct, tracks, DetectFlags::All, detect_title);
-        result.system = det.system;
+        auto det = detect_game_platform(sector_reader, ct, tracks, DetectFlags::All, detect_title);
+        result.game_platform = det.game_platform;
         result.title = det.title;
+        result.manufacturer_id = det.manufacturer_id;
         return result;
     }
 
@@ -1060,17 +1065,19 @@ DetectionResult detect_input(const std::string& input_path, bool detect_title)
             std::vector<TrackInfo> tracks = { ti };
 
             auto reader = make_file_reader(file, sector_size);
-            auto det = detect_system(reader, ContentType::CDROM, tracks, DetectFlags::All, detect_title);
-            result.system = det.system;
+            auto det = detect_game_platform(reader, ContentType::CDROM, tracks, DetectFlags::All, detect_title);
+            result.game_platform = det.game_platform;
             result.title = det.title;
+            result.manufacturer_id = det.manufacturer_id;
         } else {
             // Cooked 2048 sectors — DVD if > 1GB, else CD
             if (file_size > 1073741824ULL) {
                 result.format = "dvd";
                 auto reader = make_file_reader(file, 2048);
-                auto det = detect_system(reader, ContentType::DVD, {}, DetectFlags::All, detect_title);
-                result.system = det.system;
+                auto det = detect_game_platform(reader, ContentType::DVD, {}, DetectFlags::All, detect_title);
+                result.game_platform = det.game_platform;
                 result.title = det.title;
+                result.manufacturer_id = det.manufacturer_id;
             } else {
                 result.format = "cd";
                 uint32_t num_frames = static_cast<uint32_t>(file_size / 2048);
@@ -1084,9 +1091,10 @@ DetectionResult detect_input(const std::string& input_path, bool detect_title)
                 std::vector<TrackInfo> tracks = { ti };
 
                 auto reader = make_file_reader(file, 2048);
-                auto det = detect_system(reader, ContentType::CDROM, tracks, DetectFlags::All, detect_title);
-                result.system = det.system;
+                auto det = detect_game_platform(reader, ContentType::CDROM, tracks, DetectFlags::All, detect_title);
+                result.game_platform = det.game_platform;
                 result.title = det.title;
+                result.manufacturer_id = det.manufacturer_id;
             }
         }
         return result;
@@ -1099,21 +1107,21 @@ DetectionResult detect_input(const std::string& input_path, bool detect_title)
 
 // ======================> Utility
 
-const char* system_name(CdSystem sys)
+const char* game_platform_name(GamePlatform sys)
 {
     switch (sys) {
-    case CdSystem::PS1:       return "PlayStation";
-    case CdSystem::PS2:       return "PlayStation 2";
-    case CdSystem::PSP:       return "PSP";
-    case CdSystem::Saturn:    return "Sega Saturn";
-    case CdSystem::MegaCD:    return "Mega CD";
-    case CdSystem::PCEngine:  return "PC Engine CD";
-    case CdSystem::NeoGeoCD:  return "Neo Geo CD";
-    case CdSystem::ThreeDO:   return "3DO";
-    case CdSystem::Dreamcast: return "Dreamcast";
-    case CdSystem::DVDISO:    return "DVD";
-    case CdSystem::GenericCD: return "Generic CD";
-    case CdSystem::Unknown:   return "Unknown";
+    case GamePlatform::PS1:       return "PlayStation";
+    case GamePlatform::PS2:       return "PlayStation 2";
+    case GamePlatform::PSP:       return "PSP";
+    case GamePlatform::Saturn:    return "Sega Saturn";
+    case GamePlatform::MegaCD:    return "Mega CD";
+    case GamePlatform::PCEngine:  return "PC Engine CD";
+    case GamePlatform::NeoGeoCD:  return "Neo Geo CD";
+    case GamePlatform::ThreeDO:   return "3DO";
+    case GamePlatform::Dreamcast: return "Dreamcast";
+    case GamePlatform::DVDISO:    return "DVD";
+    case GamePlatform::GenericCD: return "Generic CD";
+    case GamePlatform::Unknown:   return "Unknown";
     }
     return "Unknown";
 }

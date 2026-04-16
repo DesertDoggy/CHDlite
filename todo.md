@@ -1,18 +1,19 @@
 # CHDlite TODO
 
 ## Read Functionality
-- [ ] **Extend read to support non-CHD files**
+- [x] **Extend read to support non-CHD files**
   - Currently: CHD files only
   - Add support for: ISO images, CD images, etc.
   - Use auto `platform` detect to distinguish file types
   - Auto-detect should work on raw/non-CHD files too
 
 ## Terminology Change: "system" → "platform"
-- [ ] **Rename for consistency with main app**
-  - Update codebase: `detect_system` → `detect_platform`
-  - Update API: functions/variables using "system" → "platform"
+- [x] **Rename for consistency with main app**
+  - Update codebase: `detect_system` → `detect_game_platform` (code), displayed as "Platform:"
+  - Update API: functions/variables using "system" → "game_platform"
   - Reasoning: "platform" is clearer (refers to game console)
   - "system" is ambiguous (could mean OS/computer)
+  - "game_platform" used in code to avoid confusion with OS platform
   - This matches main application terminology
 
 ## macOS

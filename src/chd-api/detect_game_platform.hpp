@@ -1,9 +1,9 @@
 // license:GPLv3
 // CHDlite - Cross-platform CHD library
-// detect_system.hpp - Platform auto-detection for disc images
+// detect_game_platform.hpp - Platform auto-detection for disc images
 
-#ifndef CHDLITE_DETECT_SYSTEM_HPP
-#define CHDLITE_DETECT_SYSTEM_HPP
+#ifndef CHDLITE_DETECT_GAME_PLATFORM_HPP
+#define CHDLITE_DETECT_GAME_PLATFORM_HPP
 
 #include "chd_types.hpp"
 
@@ -36,9 +36,9 @@ using SectorReader = std::function<bool(uint32_t lba, uint8_t* buffer)>;
 // Result of detection — system, optional title/game ID, and format hint for raw input
 struct DetectionResult
 {
-    CdSystem    system = CdSystem::Unknown;
+    GamePlatform    game_platform = GamePlatform::Unknown;
     std::string title;       // extracted game title (empty if not requested or unavailable)
-    std::string game_id;     // product/serial number (e.g. SCPS_100.50, T-9527G)
+    std::string manufacturer_id;     // product/serial number (e.g. SCPS_100.50, T-9527G)
     std::string format;      // "cd", "dvd", or "raw" (used by detect_input)
 };
 
@@ -55,14 +55,14 @@ struct InputDiscInfo
 // content_type hints the dispatch path (CDROM/GDROM/DVD).
 // tracks is needed for heuristic checks (e.g. PC Engine).
 // If detect_title is true, also extracts game title from filesystem.
-DetectionResult detect_system(const SectorReader& read_sector,
+DetectionResult detect_game_platform(const SectorReader& read_sector,
                               ContentType content_type,
                               const std::vector<TrackInfo>& tracks = {},
                               DetectFlags flags = DetectFlags::All,
                               bool detect_title = false);
 
 // Convenience: detect from an open CHD
-DetectionResult detect_system(const ChdReader& reader,
+DetectionResult detect_game_platform(const ChdReader& reader,
                               DetectFlags flags = DetectFlags::All,
                               bool detect_title = false);
 
@@ -71,9 +71,9 @@ DetectionResult detect_system(const ChdReader& reader,
 DetectionResult detect_input(const std::string& input_path,
                              bool detect_title = false);
 
-// Convert CdSystem enum to a human-readable string
-const char* system_name(CdSystem sys);
+// Convert GamePlatform enum to a human-readable string
+const char* game_platform_name(GamePlatform sys);
 
 } // namespace chdlite
 
-#endif // CHDLITE_DETECT_SYSTEM_HPP
+#endif // CHDLITE_DETECT_GAME_PLATFORM_HPP

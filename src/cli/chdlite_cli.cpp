@@ -386,13 +386,75 @@ static Args parse_args(int argc, char** argv)
 
 static int cmd_read(const Args& args)
 {
-    // "read" / "info" — display CHD header, tracks, metadata, system detection
+    // "read" / "info" — display file info, tracks, and platform detection
     if (args.input.empty())
     {
         std::fprintf(stderr, "Error: no input file specified\n");
         return 1;
     }
 
+    // Non-CHD path: use detect_input for platform info, skip CHD-specific sections
+    if (!ChdReader::is_chd_file(args.input))
+    {
+        // If this is a .bin, check if a .cue/.gdi in the same directory references it.
+        // If so, redirect the user to use the sheet file instead.
+        fs::path inp(args.input);
+        std::string ext_lower = inp.extension().string();
+        std::transform(ext_lower.begin(), ext_lower.end(), ext_lower.begin(), ::tolower);
+        if (ext_lower == ".bin")
+        {
+            std::string bin_name_lower = inp.filename().string();
+            std::transform(bin_name_lower.begin(), bin_name_lower.end(), bin_name_lower.begin(), ::tolower);
+            fs::path dir = inp.parent_path();
+            std::error_code ec2;
+            for (auto& e : fs::directory_iterator(dir, ec2))
+            {
+                std::string sheet_ext = e.path().extension().string();
+                std::transform(sheet_ext.begin(), sheet_ext.end(), sheet_ext.begin(), ::tolower);
+                if (sheet_ext != ".cue" && sheet_ext != ".gdi") continue;
+                std::ifstream sf(e.path().string());
+                std::string line;
+                while (std::getline(sf, line))
+                {
+                    std::string line_lower = line;
+                    std::transform(line_lower.begin(), line_lower.end(), line_lower.begin(), ::tolower);
+                    if (line_lower.find(bin_name_lower) != std::string::npos)
+                    {
+                        std::printf("Skipped: %s is part of %s\n",
+                            inp.filename().string().c_str(),
+                            e.path().filename().string().c_str());
+                        std::printf("Use:     read \"%s\"\n", e.path().string().c_str());
+                        return 0;
+                    }
+                }
+            }
+        }
+
+        std::printf("Input file:   %s\n", args.input.c_str());
+        std::error_code ec;
+        auto fsize = fs::file_size(fs::path(args.input), ec);
+        if (!ec)
+            std::printf("File size:    %s bytes\n", big_int_string(static_cast<uint64_t>(fsize)).c_str());
+
+        auto det = detect_input(args.input, true);
+        if (!det.format.empty())
+        {
+            const char* fmt_name = det.format == "cd"  ? "CD-ROM"
+                                 : det.format == "dvd" ? "DVD"
+                                 :                       "Raw";
+            std::printf("Format:       %s\n", fmt_name);
+        }
+        if (det.game_platform != GamePlatform::Unknown)
+        {
+            std::printf("Platform:     %s\n", game_platform_name(det.game_platform));
+            std::printf("Title:        %s\n", det.title.empty() ? "N/A" : det.title.c_str());
+            std::printf("Manufacturer ID: %s\n", det.manufacturer_id.empty() ? "N/A" : det.manufacturer_id.c_str());
+        }
+        log_info("read OK");
+        return 0;
+    }
+
+    // CHD path: open with ChdReader and display full CHD info
     ChdReader reader;
     try {
         reader.open(args.input);
@@ -438,15 +500,13 @@ static int cmd_read(const Args& args)
         }
     }
 
-    // System detection
-    auto det = reader.detect_system(DetectFlags::All, true);
-    if (det.system != CdSystem::Unknown)
+    // Platform detection
+    auto det = reader.detect_game_platform(DetectFlags::All, true);
+    if (det.game_platform != GamePlatform::Unknown)
     {
-        std::printf("System:       %s\n", system_name(det.system));
-        if (!det.title.empty())
-            std::printf("Title:        %s\n", det.title.c_str());
-        if (!det.game_id.empty())
-            std::printf("Game ID:      %s\n", det.game_id.c_str());
+        std::printf("Platform:     %s\n", game_platform_name(det.game_platform));
+        std::printf("Title:        %s\n", det.title.empty() ? "N/A" : det.title.c_str());
+        std::printf("Manufacturer ID: %s\n", det.manufacturer_id.empty() ? "N/A" : det.manufacturer_id.c_str());
     }
 
     log_info("read OK");
@@ -681,12 +741,12 @@ static int cmd_create(const Args& args)
     std::printf("Input size:   %s bytes\n", big_int_string(result.input_bytes).c_str());
     std::printf("Output size:  %s bytes\n", big_int_string(result.output_bytes).c_str());
     std::printf("Ratio:        %.1f%%\n", result.compression_ratio * 100.0);
-    if (result.detected_system != CdSystem::Unknown)
-        std::printf("System:       %s\n", system_name(result.detected_system));
+    if (result.detected_game_platform != GamePlatform::Unknown)
+        std::printf("Platform:     %s\n", game_platform_name(result.detected_game_platform));
     if (!result.detected_title.empty())
         std::printf("Title:        %s\n", result.detected_title.c_str());
-    if (!result.detected_gameid.empty())
-        std::printf("Game ID:      %s\n", result.detected_gameid.c_str());
+    if (!result.detected_manufacturer_id.empty())
+        std::printf("Manufacturer ID: %s\n", result.detected_manufacturer_id.c_str());
     std::printf("Compression complete\n");
 
     log_info("create OK: " + std::to_string(result.output_bytes) + " bytes");

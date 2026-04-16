@@ -448,66 +448,57 @@ if (iso_file_exists("*.PRG") || iso_file_exists("*.FIX") || iso_file_exists("*.S
 |---|---|
 | **Sector size** | 2048 (Mode 1) or 2352 (raw) |
 | **Filesystem** | Proprietary (most games) or rare ISO 9660 |
-| **Check location** | TOC structure + sector 0/1 of data track |
-| **Primary detection** | Process of elimination or PCE-specific boot structure |
+| **Check location** | Sector `data_lba + 1` (second sector of data track) |
+| **Primary detection** | `"PC Engine CD-ROM SYSTEM"` magic at byte 32 of sector 1 |
 
-### Identification Challenge
-PC Engine CD-ROM² games do **not** have a standardized magic string at a fixed offset like Sega platforms. Detection relies on multiple heuristics.
+### Method 1: IPL Header Magic (primary, reliable)
+The second sector of the data track (index+1 from track start LBA) contains the IPL (Initial Program Loader) header:
 
-### Method 1: TOC / Track Layout
+| Offset | Length | Content |
+|--------|--------|---------|
+| 0x00-0x02 | 3 bytes | Start sector of program data (LE24) |
+| 0x03 | 1 byte | Number of sectors for program |
+| 0x04-0x05 | 2 bytes | Load address |
+| 0x06-0x07 | 2 bytes | Jump address |
+| 0x08-0x1F | 24 bytes | Program name (ASCII) |
+| **0x20-0x36** | **23 bytes** | **`"PC Engine CD-ROM SYSTEM"` magic** |
+| 0x57-0x6A | 22 bytes | Unknown/padding |
+| **0x6A-0x7F** | **22 bytes** | **Game title** |
+
+Reference: http://shu.sheldows.com/shu/download/pcedocs/pce_cdrom.html
+
+**Detection**: Check for `"PC Engine CD-ROM SYSTEM"` at byte 0x20 of sector `data_lba + 1`.
+
+**Title extraction**: Bytes 0x6A–0x7F (22 bytes) of sector `data_lba + 1` contain the game title as a trimmed ASCII string.
+
+**Game ID**: No standardized serial number format exists for PC Engine CD — leave empty.
+
+### Method 2: Track Layout Heuristic (fallback)
 PC Engine CD games have a characteristic disc layout:
 - **Track 1**: Audio track (2-second warning message, required by CD-ROM² spec)
 - **Track 2**: Data track (Mode 1, 2048 bytes/sector) — contains the game program
 - **Tracks 3+**: Mix of audio and data tracks
 
-Key indicator: First track is audio, second track is data.
+If magic is absent (rare/non-standard releases), use as fallback:
+- First track is audio, second track is data
+- IPL fields: `iplbln` (byte 3) ≠ 0, `iplsta` (bytes 4-5) ≥ 0x2000, `ipljmp` (bytes 6-7) ≠ 0
 
-### Method 2: Boot Sector Content (sector 0 of data track)
-The data track (usually track 2) begins with the IPL (Initial Program Loader) which is loaded by the System Card BIOS. The first few sectors contain:
-- Load address and execution entry point
-- The actual program data
-
-At sector 0 of the data track, some games have identifiable content, but there is no universal "PC Engine" magic at byte 0.
-
-### Method 3: ISO 9660 PVD (if present)
+### Method 3: ISO 9660 PVD (rare)
 A small number of PC Engine CD titles use ISO 9660. When present:
 | PVD Offset | Field | Possible Values |
 |------------|-------|----------------|
 | 0x008 | System ID | May contain `PC ENGINE`, `NEC`, or be blank |
 | 0x028 | Volume ID | Game title |
 
-### Method 4: Process of Elimination (recommended for CHDlite)
-After checking all other platforms, if the disc:
-1. Has audio + data track layout (typical CD-ROM game)
-2. Does NOT match any Sega header (no `SEGA` at byte 0)
-3. Does NOT have `SYSTEM.CNF` (not PlayStation)
-4. Does NOT have `PSP_GAME/` (not PSP)
-5. Does NOT have Opera filesystem header (not 3DO)
-6. Does NOT have `IPL.TXT` (not Neo Geo CD)
-7. Does NOT have `VIDEO_TS/` (not DVD-Video)
-8. Has small data size consistent with PCE (typically < 700MB)
-9. Track 1 is audio, Track 2 is data
-
-Then it may be a PC Engine CD title.
-
-### Method 5: BRAM Init String (emulator reference)
-The PC Engine System Card initializes backup RAM with the signature:
-```
-'H', 'U', 'B', 'M', 0x00, 0x88, 0x10, 0x80
-```
-This string appears in BRAM (battery RAM), **not** on the disc itself — but it confirms PCE hardware association.
-
 ### Detection Code
 ```
-// Check for PCE-specific data track content
-// After all other platform checks fail:
-track_layout = get_toc();
-if (track_layout[0].type == AUDIO &&
-    track_layout[1].type == DATA &&
-    no_other_platform_matched)
-    → Platform = PC Engine CD (probable)
-
-// Optional: Check for rare ISO 9660 with PCE system ID
+// Primary: IPL header magic in sector data_lba+1
+uint8_t sector1[2048];
+read_sector(data_lba + 1, sector1);
+if (memcmp("PC Engine CD-ROM SYSTEM", &sector1[0x20], 23) == 0) {
+    platform = PCEngine;
+    title = trim(string(&sector1[0x6A], 22));
+}
 pvd = read_sector(16);
 if (pvd[0x008] contains "PC ENGINE" || pvd[0x008] contains "NEC")
     → Platform = PC Engine CD

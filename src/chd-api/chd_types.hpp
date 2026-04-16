@@ -97,6 +97,27 @@ enum class GamePlatform
     GenericCD
 };
 
+// How the disc format (cd/dvd/gd/raw) was determined during detect_input()
+enum class FormatSource
+{
+    Unknown,
+    Extension,      // file extension (.cue/.gdi/.toc/.nrg) → format determined without reading
+    SyncBytes,      // CD sync bytes (0x00 FF×10 0x00) present → raw CD sectors (2352/2336)
+    DvdMatch,       // 2048-byte sectors; DVD-specific platform detected (PS2, PSP, DVD-Video…)
+    DvdFallback,    // 2048-byte sectors; no specific platform matched → DVD by default
+    CdOverride,     // 2048-byte sectors; CD-specific platform detected, overrode DVD default
+};
+
+// How the game platform was identified during detect_game_platform()
+enum class PlatformSource
+{
+    Unknown,
+    Sector0,    // sector-0 magic bytes (3DO, MegaCD, Saturn, Dreamcast)
+    Iso9660,    // ISO 9660 volume descriptor / directory entries
+    Heuristic,  // multi-sector heuristic (PC Engine)
+    Default,    // fell through to GenericCD or DVDISO
+};
+
 // ======================> Track types (mirrors MAME cdrom_file constants)
 
 enum class TrackType
@@ -216,9 +237,11 @@ struct ArchiveResult
     uint64_t    output_bytes;
     double      compression_ratio;
     GamePlatform    detected_game_platform;
-    std::string detected_title;    // game title (populated when detect_title is true)
-    std::string detected_manufacturer_id;   // product/serial number (populated when detect_title is true)
+    std::string detected_title;
+    std::string detected_manufacturer_id;
     Codec       codec_used;
+    FormatSource    detected_format_source   = FormatSource::Unknown;
+    PlatformSource  detected_platform_source = PlatformSource::Unknown;
 };
 
 // ======================> Options

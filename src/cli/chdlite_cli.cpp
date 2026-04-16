@@ -41,9 +41,9 @@ using namespace chdlite;
 // Appends to chdlite.log next to the binary or cwd.
 // Records: timestamp, version, full command line, status (OK or error).
 // Default level per release phase:  alpha=info  beta=error  release=none
-// Override with -log info|error|none
+// Override with -log debug|info|warning|error|critical|none
 
-enum class LogLevel { Info = 0, Error = 1, None = 2 };
+enum class LogLevel { Debug = 0, Info = 1, Warning = 2, Error = 3, Critical = 4, None = 5 };
 
 static constexpr LogLevel LOG_DEFAULT = LogLevel::Info;  // ← change per phase
 
@@ -98,8 +98,34 @@ static void log_entry(LogLevel level, const std::string& status)
     log << std::endl;
 }
 
-static void log_info(const std::string& msg)   { log_entry(LogLevel::Info, msg); }
-static void log_error(const std::string& msg)  { log_entry(LogLevel::Error, "ERROR: " + msg); }
+static void log_debug(const std::string& msg)    { log_entry(LogLevel::Debug,    "DEBUG: "    + msg); }
+static void log_info(const std::string& msg)     { log_entry(LogLevel::Info,     msg); }
+static void log_warning(const std::string& msg)  { log_entry(LogLevel::Warning,  "WARNING: "  + msg); }
+static void log_error(const std::string& msg)    { log_entry(LogLevel::Error,    "ERROR: "    + msg); }
+static void log_critical(const std::string& msg) { log_entry(LogLevel::Critical, "CRITICAL: " + msg); }
+
+static const char* format_source_name(FormatSource s)
+{
+    switch (s) {
+    case FormatSource::Extension:    return "extension";
+    case FormatSource::SyncBytes:    return "sync-bytes (raw CD sectors)";
+    case FormatSource::DvdMatch:     return "dvd-match (platform identified)";
+    case FormatSource::DvdFallback:  return "dvd-fallback (no specific match)";
+    case FormatSource::CdOverride:   return "cd-override (CD platform beat DVD fallback)";
+    default:                         return "unknown";
+    }
+}
+
+static const char* platform_source_name(PlatformSource s)
+{
+    switch (s) {
+    case PlatformSource::Sector0:   return "sector-0 magic";
+    case PlatformSource::Iso9660:   return "ISO 9660 filesystem";
+    case PlatformSource::Heuristic: return "heuristic";
+    case PlatformSource::Default:   return "default (no match)";
+    default:                        return "unknown";
+    }
+}
 
 // ======================> Standalone-launch detection + pause
 // On Windows, a process created via drag-and-drop (or double-click) owns its
@@ -262,7 +288,7 @@ struct Args
     uint64_t    input_frames = 0;
     HashFlags   hash = HashFlags(0);    // 0 = none
     bool        hash_default = false;   // -hash with no args → SHA1
-    std::string log_level;              // -log info|error|none
+    std::string log_level;              // -log debug|info|warning|error|critical|none
     std::string log_dir;                // --log-dir <path>        override activity log directory
     std::string hash_dir;               // --hash-dir <path|"disc"> override .hashes output dir
                                         //   "disc" = next to input file
@@ -489,6 +515,9 @@ static int cmd_read(const Args& args)
             std::printf("Title:        %s\n", det.title.empty() ? "N/A" : det.title.c_str());
             std::printf("Manufacturer ID: %s\n", det.manufacturer_id.empty() ? "N/A" : det.manufacturer_id.c_str());
         }
+        log_debug("detect: format-source=" + std::string(format_source_name(det.format_source))
+            + " platform=" + game_platform_name(det.game_platform)
+            + " platform-source=" + platform_source_name(det.platform_source));
         log_info("read OK");
         return 0;
     }
@@ -869,6 +898,13 @@ static int cmd_create(const Args& args)
         std::printf("Manufacturer ID: %s\n", result.detected_manufacturer_id.c_str());
     std::printf("Compression complete\n");
 
+    {
+        std::string dbg = std::string("format-source=") + format_source_name(result.detected_format_source);
+        if (result.detected_game_platform != GamePlatform::Unknown)
+            dbg += std::string(" platform=") + game_platform_name(result.detected_game_platform)
+                 + " platform-source=" + platform_source_name(result.detected_platform_source);
+        log_debug("detect: " + dbg);
+    }
     log_info("create OK: " + std::to_string(result.output_bytes) + " bytes");
     return 0;
 }
@@ -1137,9 +1173,12 @@ int main(int argc, char** argv)
     {
         std::string ll = args.log_level;
         for (auto& c : ll) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (ll == "info")        g_log_level = LogLevel::Info;
-        else if (ll == "error")  g_log_level = LogLevel::Error;
-        else if (ll == "none" || ll == "off") g_log_level = LogLevel::None;
+        if (ll == "debug")                        g_log_level = LogLevel::Debug;
+        else if (ll == "info")                    g_log_level = LogLevel::Info;
+        else if (ll == "warning" || ll == "warn") g_log_level = LogLevel::Warning;
+        else if (ll == "error")                   g_log_level = LogLevel::Error;
+        else if (ll == "critical")                g_log_level = LogLevel::Critical;
+        else if (ll == "none" || ll == "off")     g_log_level = LogLevel::None;
     }
 
     std::string cmd = args.command;

@@ -682,7 +682,8 @@ DetectionResult detect_game_platform(const SectorReader& read_sector,
 
     // ===== GD-ROM path: always Dreamcast =====
     if (content_type == ContentType::GDROM) {
-        result.game_platform = GamePlatform::Dreamcast;
+        result.game_platform   = GamePlatform::Dreamcast;
+        result.platform_source = PlatformSource::Sector0;
         if (has_detect_flag(flags, DetectFlags::Sector0)) {
             // Verify with header check on last data track
             for (int i = static_cast<int>(tracks.size()) - 1; i >= 0; i--) {
@@ -713,20 +714,21 @@ DetectionResult detect_game_platform(const SectorReader& read_sector,
                 GamePlatform sys;
 
                 sys = check_psp(read_sector, pvd);
-                if (sys != GamePlatform::Unknown) { result.game_platform = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
+                if (sys != GamePlatform::Unknown) { result.game_platform = sys; result.platform_source = PlatformSource::Iso9660; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
 
                 sys = check_ps1_ps2(read_sector, pvd);
-                if (sys != GamePlatform::Unknown) { result.game_platform = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
+                if (sys != GamePlatform::Unknown) { result.game_platform = sys; result.platform_source = PlatformSource::Iso9660; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
 
                 sys = check_dvd_video(read_sector, pvd);
-                if (sys != GamePlatform::Unknown) { result.game_platform = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
+                if (sys != GamePlatform::Unknown) { result.game_platform = sys; result.platform_source = PlatformSource::Iso9660; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
 
                 // No system match but valid ISO — use volume ID as title
                 if (detect_title)
                     fill_metadata(read_sector, GamePlatform::DVDISO, pvd, result);
             }
         }
-        result.game_platform = GamePlatform::DVDISO;
+        result.game_platform   = GamePlatform::DVDISO;
+        result.platform_source = PlatformSource::Default;
         return result;
     }
 
@@ -754,28 +756,28 @@ DetectionResult detect_game_platform(const SectorReader& read_sector,
 
                     sys = check_3do(sector0);
                     if (sys != GamePlatform::Unknown) {
-                        result.game_platform = sys;
+                        result.game_platform = sys; result.platform_source = PlatformSource::Sector0;
                         if (detect_title) { Iso9660Pvd pvd; fill_metadata(read_sector, sys, pvd, result); }
                         return result;
                     }
 
                     sys = check_megacd(sector0);
                     if (sys != GamePlatform::Unknown) {
-                        result.game_platform = sys;
+                        result.game_platform = sys; result.platform_source = PlatformSource::Sector0;
                         if (detect_title) { Iso9660Pvd pvd; fill_metadata(read_sector, sys, pvd, result); }
                         return result;
                     }
 
                     sys = check_saturn(sector0);
                     if (sys != GamePlatform::Unknown) {
-                        result.game_platform = sys;
+                        result.game_platform = sys; result.platform_source = PlatformSource::Sector0;
                         if (detect_title) { Iso9660Pvd pvd; fill_metadata(read_sector, sys, pvd, result); }
                         return result;
                     }
 
                     sys = check_dreamcast(sector0);
                     if (sys != GamePlatform::Unknown) {
-                        result.game_platform = sys;
+                        result.game_platform = sys; result.platform_source = PlatformSource::Sector0;
                         if (detect_title) { Iso9660Pvd pvd; fill_metadata(read_sector, sys, pvd, result); }
                         return result;
                     }
@@ -792,16 +794,16 @@ DetectionResult detect_game_platform(const SectorReader& read_sector,
                     GamePlatform sys;
 
                     sys = check_ps1_ps2(read_sector, pvd);
-                    if (sys != GamePlatform::Unknown) { result.game_platform = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
+                    if (sys != GamePlatform::Unknown) { result.game_platform = sys; result.platform_source = PlatformSource::Iso9660; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
 
                     sys = check_neogeocd(read_sector, pvd);
-                    if (sys != GamePlatform::Unknown) { result.game_platform = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
+                    if (sys != GamePlatform::Unknown) { result.game_platform = sys; result.platform_source = PlatformSource::Iso9660; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
 
                     sys = check_psp(read_sector, pvd);
-                    if (sys != GamePlatform::Unknown) { result.game_platform = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
+                    if (sys != GamePlatform::Unknown) { result.game_platform = sys; result.platform_source = PlatformSource::Iso9660; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
 
                     sys = check_dvd_video(read_sector, pvd);
-                    if (sys != GamePlatform::Unknown) { result.game_platform = sys; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
+                    if (sys != GamePlatform::Unknown) { result.game_platform = sys; result.platform_source = PlatformSource::Iso9660; if (detect_title) fill_metadata(read_sector, sys, pvd, result); return result; }
                 }
             }
 
@@ -809,7 +811,8 @@ DetectionResult detect_game_platform(const SectorReader& read_sector,
             if (has_detect_flag(flags, DetectFlags::Heuristic)) {
                 GamePlatform sys = check_pcengine(read_sector, tracks);
                 if (sys != GamePlatform::Unknown) {
-                    result.game_platform = sys;
+                    result.game_platform   = sys;
+                    result.platform_source = PlatformSource::Heuristic;
                     if (detect_title) {
                         Iso9660Pvd pvd = read_pvd(read_sector);
                         if (!pvd.valid && data_lba > 0)
@@ -821,7 +824,8 @@ DetectionResult detect_game_platform(const SectorReader& read_sector,
             }
         }
 
-        result.game_platform = GamePlatform::GenericCD;
+        result.game_platform   = GamePlatform::GenericCD;
+        result.platform_source = PlatformSource::Default;
         if (detect_title) {
             Iso9660Pvd pvd = read_pvd(read_sector);
             if (!pvd.valid && data_lba > 0)
@@ -936,6 +940,7 @@ DetectionResult detect_input(const std::string& input_path, bool detect_title)
         bool is_gdrom = (toc.flags & (cdrom_file::CD_FLAG_GDROM | cdrom_file::CD_FLAG_GDROMLE)) != 0;
         ContentType ct = is_gdrom ? ContentType::GDROM : ContentType::CDROM;
         result.format = "cd";
+        result.format_source = FormatSource::Extension;
 
         // Build per-track file readers. For each sector read, find the right track file.
         // Open the first data track file for sector reading.
@@ -1023,9 +1028,10 @@ DetectionResult detect_input(const std::string& input_path, bool detect_title)
         };
 
         auto det = detect_game_platform(sector_reader, ct, tracks, DetectFlags::All, detect_title);
-        result.game_platform = det.game_platform;
-        result.title = det.title;
-        result.manufacturer_id = det.manufacturer_id;
+        result.game_platform    = det.game_platform;
+        result.title            = det.title;
+        result.manufacturer_id  = det.manufacturer_id;
+        result.platform_source  = det.platform_source;
         return result;
     }
 
@@ -1050,8 +1056,9 @@ DetectionResult detect_input(const std::string& input_path, bool detect_title)
         // Determine if CD or DVD based on sector type and size
         bool has_sync = (sector_size == 2352 || sector_size == 2336);
         if (has_sync) {
-            // Raw sectors → CD-ROM
-            result.format = "cd";
+            // Raw sectors → definitively CD (CD sync bytes present)
+            result.format        = "cd";
+            result.format_source = FormatSource::SyncBytes;
 
             // Build single-track info
             uint32_t num_frames = static_cast<uint32_t>(file_size / sector_size);
@@ -1066,35 +1073,49 @@ DetectionResult detect_input(const std::string& input_path, bool detect_title)
 
             auto reader = make_file_reader(file, sector_size);
             auto det = detect_game_platform(reader, ContentType::CDROM, tracks, DetectFlags::All, detect_title);
-            result.game_platform = det.game_platform;
-            result.title = det.title;
+            result.game_platform   = det.game_platform;
+            result.title           = det.title;
             result.manufacturer_id = det.manufacturer_id;
+            result.platform_source = det.platform_source;
         } else {
-            // Cooked 2048 sectors — DVD if > 1GB, else CD
-            if (file_size > 1073741824ULL) {
-                result.format = "dvd";
-                auto reader = make_file_reader(file, 2048);
-                auto det = detect_game_platform(reader, ContentType::DVD, {}, DetectFlags::All, detect_title);
-                result.game_platform = det.game_platform;
-                result.title = det.title;
-                result.manufacturer_id = det.manufacturer_id;
-            } else {
-                result.format = "cd";
-                uint32_t num_frames = static_cast<uint32_t>(file_size / 2048);
-                TrackInfo ti = {};
-                ti.track_number = 1;
-                ti.type = TrackType::Mode1;
-                ti.data_size = 2048;
-                ti.frames = num_frames;
-                ti.start_lba = 0;
-                ti.is_audio = false;
-                std::vector<TrackInfo> tracks = { ti };
+            // Cooked 2048-byte sectors — no sync bytes, so we can't tell from sector structure
+            // alone whether this is a DVD ISO or a CD ripped without raw headers.
+            // Run both detection paths and pick the more specific result; ties go to DVD.
+            auto reader = make_file_reader(file, 2048);
 
-                auto reader = make_file_reader(file, 2048);
-                auto det = detect_game_platform(reader, ContentType::CDROM, tracks, DetectFlags::All, detect_title);
-                result.game_platform = det.game_platform;
-                result.title = det.title;
-                result.manufacturer_id = det.manufacturer_id;
+            auto dvd_det = detect_game_platform(reader, ContentType::DVD, {}, DetectFlags::All, detect_title);
+
+            uint32_t num_frames = static_cast<uint32_t>(file_size / 2048);
+            TrackInfo ti = {};
+            ti.track_number = 1;
+            ti.type     = TrackType::Mode1;
+            ti.data_size = 2048;
+            ti.frames   = num_frames;
+            ti.start_lba = 0;
+            std::vector<TrackInfo> cd_tracks = { ti };
+            auto cd_det = detect_game_platform(reader, ContentType::CDROM, cd_tracks, DetectFlags::All, detect_title);
+
+            // A specific CD platform match overrides the generic DVD fallback.
+            // If both (or neither) are specific, prefer DVD.
+            bool dvd_specific = (dvd_det.game_platform != GamePlatform::DVDISO &&
+                                 dvd_det.game_platform != GamePlatform::Unknown);
+            bool cd_specific  = (cd_det.game_platform  != GamePlatform::GenericCD &&
+                                 cd_det.game_platform  != GamePlatform::Unknown);
+
+            if (cd_specific && !dvd_specific) {
+                result.format          = "cd";
+                result.format_source   = FormatSource::CdOverride;
+                result.game_platform   = cd_det.game_platform;
+                result.title           = cd_det.title;
+                result.manufacturer_id = cd_det.manufacturer_id;
+                result.platform_source = cd_det.platform_source;
+            } else {
+                result.format          = "dvd";
+                result.format_source   = dvd_specific ? FormatSource::DvdMatch : FormatSource::DvdFallback;
+                result.game_platform   = dvd_det.game_platform;
+                result.title           = dvd_det.title;
+                result.manufacturer_id = dvd_det.manufacturer_id;
+                result.platform_source = dvd_det.platform_source;
             }
         }
         return result;

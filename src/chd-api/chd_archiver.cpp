@@ -134,9 +134,9 @@ static const chd_codec_type s_ps2_cd_compression[4] =
 static const chd_codec_type s_smart_dvd_compression[4] =
     { CHD_CODEC_ZSTD, CHD_CODEC_NONE, CHD_CODEC_NONE, CHD_CODEC_NONE };
 
-// Other CD / GD-ROM: cdzs (CD ZSTD)
+// Other CD / GD-ROM: cdzs, cdfl (ZSTD wins data sectors; FLAC wins audio sectors)
 static const chd_codec_type s_smart_cd_compression[4] =
-    { CHD_CODEC_CD_ZSTD, CHD_CODEC_NONE, CHD_CODEC_NONE, CHD_CODEC_NONE };
+    { CHD_CODEC_CD_ZSTD, CHD_CODEC_CD_FLAC, CHD_CODEC_NONE, CHD_CODEC_NONE };
 
 // Pick the best default compression array based on detected system and content format.
 // Returns null if no smart default applies (caller falls back to chdman legacy defaults).
@@ -737,9 +737,11 @@ ArchiveResult ChdArchiver::archive(const std::string& input_path,
         result = archive_raw(input_path, output_path, effective);
 
     // Populate detection results
-    result.detected_game_platform = detection.game_platform;
-    result.detected_title = detection.title;
-    result.detected_manufacturer_id = detection.manufacturer_id;
+    result.detected_game_platform    = detection.game_platform;
+    result.detected_title            = detection.title;
+    result.detected_manufacturer_id  = detection.manufacturer_id;
+    result.detected_format_source    = detection.format_source;
+    result.detected_platform_source  = detection.platform_source;
 
     // Rename output to title or game ID if requested and successful
     std::string rename_label;

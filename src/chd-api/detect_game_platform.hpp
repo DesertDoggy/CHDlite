@@ -36,10 +36,12 @@ using SectorReader = std::function<bool(uint32_t lba, uint8_t* buffer)>;
 // Result of detection — system, optional title/game ID, and format hint for raw input
 struct DetectionResult
 {
-    GamePlatform    game_platform = GamePlatform::Unknown;
-    std::string title;       // extracted game title (empty if not requested or unavailable)
-    std::string manufacturer_id;     // product/serial number (e.g. SCPS_100.50, T-9527G)
-    std::string format;      // "cd", "dvd", or "raw" (used by detect_input)
+    GamePlatform    game_platform    = GamePlatform::Unknown;
+    std::string     title;            // extracted game title (empty if not requested or unavailable)
+    std::string     manufacturer_id;  // product/serial number (e.g. SCPS_100.50, T-9527G)
+    std::string     format;           // "cd", "dvd", or "raw" (used by detect_input)
+    FormatSource    format_source    = FormatSource::Unknown;    // how format was determined
+    PlatformSource  platform_source  = PlatformSource::Unknown; // how platform was identified
 };
 
 // Info about the input disc layout (for raw file detection)

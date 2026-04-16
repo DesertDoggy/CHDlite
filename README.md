@@ -58,6 +58,24 @@ hash     <input.chd> [-hash sha1,md5,...] [options] Hash CHD content
 auto     <input>     [options]                 Auto: .chd → extract, else → create
 ```
 
+### Compression defaults
+
+CHDlite picks codecs automatically based on content type with priority on speed, unless emulator compatibility issues. You can override with `-c`.
+
+| Content | Default | Reason |
+|---------|---------|--------|
+| CD / GD-ROM | `cdzs, cdfl` | ZSTD wins data sectors (fast decomp, strong ratio); FLAC wins audio sectors (lossless PCM). Two-slot competition — no wasted cycles testing codecs that can't win. |
+| DVD — PS2 | `zlib` | Some Android PS2 emulators only support `zlib` for DVD CHDs. Using ZSTD would break compatibility on mobile. |
+| DVD — PSP / generic | `zstd` | Fast decompression, especially when hashing CHD contents — which requires reading and decompressing every hunk. |
+
+**`--best` preset** (not yet implemented): `cdlz, cdzl, cdfl` for CD / `lzma, zlib` for DVD — maximises compression ratio at the cost of slower decompression, matching chdman's defaults.
+
+> **Why not match chdman's default (`cdlz, cdzl, cdfl`)?**  
+> chdman's 3-slot default prioritises ratio over speed.  
+> CHDlite puts priority on compatibility and speed. Especially decompression speed for hashing. 
+> Compatibility tests are limited. If you experience any issues with certain emulators, reports will be appreciated.
+
+
 ### chdman-compatible commands
 
 ```

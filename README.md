@@ -134,4 +134,10 @@ chdlite game.cue              # creates CHD
 chdlite /path/to/chd/folder/
 ```
 
+### chdman compatibility
+
+CHDlite aims for full chdman compatibility with one exception:
+
+- **Uncompressed CHD (`-c none`) is not supported.** Creating or working with uncompressed CHD files is not currently implemented. This is the only known chdman non-compliance.
+
 

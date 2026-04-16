@@ -51,6 +51,7 @@ static LogLevel     g_log_level = LOG_DEFAULT;
 static std::string  g_cmdline;
 static std::string  g_input_file;
 static std::string  g_log_path;
+static fs::path     g_logs_dir;   // <exe_root>/logs/  (populated by init_log)
 
 static void init_log(int argc, char** argv)
 {
@@ -66,13 +67,13 @@ static void init_log(int argc, char** argv)
             g_cmdline += a;
     }
 
-    // Log file: next to the executable, fallback to cwd
+    // Resolve <exe_root>/logs/ — create it if absent; fall back to ./logs/
     std::error_code ec;
     fs::path exe_dir = fs::canonical(fs::path(argv[0]).parent_path(), ec);
-    if (ec || exe_dir.empty())
-        g_log_path = "chdlite.log";
-    else
-        g_log_path = (exe_dir / "chdlite.log").string();
+    g_logs_dir = (ec || exe_dir.empty()) ? fs::path("logs") : exe_dir / "logs";
+    fs::create_directories(g_logs_dir, ec);  // silently ignore "already exists" etc.
+
+    g_log_path = (g_logs_dir / "chdlite.log").string();
 }
 
 static void log_entry(LogLevel level, const std::string& status)
@@ -99,6 +100,36 @@ static void log_entry(LogLevel level, const std::string& status)
 
 static void log_info(const std::string& msg)   { log_entry(LogLevel::Info, msg); }
 static void log_error(const std::string& msg)  { log_entry(LogLevel::Error, "ERROR: " + msg); }
+
+// ======================> Standalone-launch detection + pause
+// On Windows, a process created via drag-and-drop (or double-click) owns its
+// own console window.  A process launched from an existing terminal inherits
+// one owned by the shell.  Comparing the console-window owner PID to the
+// current PID distinguishes the two cases.
+
+#ifdef _WIN32
+#include <windows.h>
+static bool is_standalone_launch()
+{
+    HWND hwnd = GetConsoleWindow();
+    if (!hwnd) return false;
+    DWORD console_pid = 0;
+    GetWindowThreadProcessId(hwnd, &console_pid);
+    return console_pid == GetCurrentProcessId();
+}
+#else
+static bool is_standalone_launch() { return false; }
+#endif
+
+static void pause_for_user()
+{
+#ifdef _WIN32
+    std::printf("\nPress Enter to close...");
+    std::fflush(stdout);
+    std::fflush(stdin);
+    (void)std::getchar();
+#endif
+}
 
 // ======================> Terminal output helpers (chdman style)
 
@@ -232,6 +263,9 @@ struct Args
     HashFlags   hash = HashFlags(0);    // 0 = none
     bool        hash_default = false;   // -hash with no args → SHA1
     std::string log_level;              // -log info|error|none
+    std::string log_dir;                // --log-dir <path>        override activity log directory
+    std::string hash_dir;               // --hash-dir <path|"disc"> override .hashes output dir
+                                        //   "disc" = next to input file
 };
 
 static void print_usage()
@@ -277,7 +311,10 @@ static void print_usage()
         "  -ih, --inputhunks <n>       Number of hunks to extract\n"
         "  -hash <algorithms>          Compute hashes (sha1,md5,crc32,sha256,xxh3)\n"
         "                              Default: sha1. Comma-separated for multiple.\n"
+        "  --hash-dir <path>           Directory for .hashes output file\n"
+        "                              Default: <exe>/logs/  Special: \"disc\" = next to input\n"
         "  -log <level>                Log level: info, error, none (default: info)\n"
+        "  --log-dir <path>            Directory for chdlite.log  (default: <exe>/logs/)\n"
         "  -v, --verbose               Verbose output\n"
         "\n",
         VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH
@@ -362,7 +399,9 @@ static Args parse_args(int argc, char** argv)
         else if (arg == "-ih" || arg == "--inputhunks")       a.input_hunks = std::stoull(next());
         else if (arg == "-isf" || arg == "--inputstartframe") a.input_start_frame = std::stoull(next());
         else if (arg == "-if" || arg == "--inputframes")      a.input_frames = std::stoull(next());
-        else if (arg == "-log" || arg == "--log")      a.log_level = next();
+        else if (arg == "-log" || arg == "--log")       a.log_level = next();
+        else if (arg == "--log-dir")                    a.log_dir = next();
+        else if (arg == "--hash-dir")                   a.hash_dir = next();
         else if (arg == "-hash" || arg == "--hash")
         {
             // -hash with optional value: if next arg looks like a flag, use default SHA1
@@ -513,6 +552,84 @@ static int cmd_read(const Args& args)
     return 0;
 }
 
+// ======================> Hash file writer (shared by all commands that produce hashes)
+// Resolves the output path from args.hash_dir:
+//   ""     → g_logs_dir (default)
+//   "disc" → directory of input file
+//   else   → use as-is (treated as a directory)
+// Filename is always <input-filename>.hashes
+
+static void write_hashes_file(const ContentHashResult& result,
+                               const std::string& input_path,
+                               const std::string& hash_dir_arg,
+                               HashFlags flags)
+{
+    // Resolve output directory
+    fs::path out_dir;
+    if (hash_dir_arg.empty())
+    {
+        out_dir = g_logs_dir.empty() ? fs::path("logs") : g_logs_dir;
+    }
+    else if (hash_dir_arg == "disc")
+    {
+        out_dir = fs::path(input_path).parent_path();
+        if (out_dir.empty()) out_dir = fs::path(".");
+    }
+    else
+    {
+        out_dir = fs::path(hash_dir_arg);
+        std::error_code ec;
+        fs::create_directories(out_dir, ec);
+    }
+
+    fs::path hashes_name = fs::path(input_path).filename();
+    hashes_name += ".hashes";
+    std::string hashes_path = (out_dir / hashes_name).string();
+
+    std::ofstream hf(hashes_path);
+    if (!hf.is_open()) return;
+
+    std::time_t now = std::time(nullptr);
+    char timebuf[64];
+    std::strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+
+    hf << "# CHDlite hash results\n";
+    hf << "# Source:  " << input_path << "\n";
+    hf << "# Date:    " << timebuf << "\n";
+    hf << "# Tracks:  " << result.tracks.size() << "\n";
+    hf << "#\n";
+
+    for (auto& t : result.tracks)
+    {
+        uint32_t tnum = t.track_number;
+        char prefix[16];
+        std::snprintf(prefix, sizeof(prefix), "Track %02u", tnum);
+        if (has_flag(flags, HashFlags::SHA1)    && !t.sha1.hex_string.empty())
+            hf << prefix << "  SHA-1:    " << t.sha1.hex_string    << "\n";
+        if (has_flag(flags, HashFlags::MD5)     && !t.md5.hex_string.empty())
+            hf << prefix << "  MD5:      " << t.md5.hex_string     << "\n";
+        if (has_flag(flags, HashFlags::CRC32)   && !t.crc32.hex_string.empty())
+            hf << prefix << "  CRC32:    " << t.crc32.hex_string   << "\n";
+        if (has_flag(flags, HashFlags::SHA256)  && !t.sha256.hex_string.empty())
+            hf << prefix << "  SHA-256:  " << t.sha256.hex_string  << "\n";
+        if (has_flag(flags, HashFlags::XXH3_128) && !t.xxh3_128.hex_string.empty())
+            hf << prefix << "  XXH3-128: " << t.xxh3_128.hex_string << "\n";
+    }
+
+    if (!result.sheet_content.empty())
+    {
+        if (has_flag(flags, HashFlags::SHA1)  && !result.sheet_hash.sha1.hex_string.empty())
+            hf << "Sheet     SHA-1:    " << result.sheet_hash.sha1.hex_string  << "\n";
+        if (has_flag(flags, HashFlags::MD5)   && !result.sheet_hash.md5.hex_string.empty())
+            hf << "Sheet     MD5:      " << result.sheet_hash.md5.hex_string   << "\n";
+        if (has_flag(flags, HashFlags::CRC32) && !result.sheet_hash.crc32.hex_string.empty())
+            hf << "Sheet     CRC32:    " << result.sheet_hash.crc32.hex_string << "\n";
+    }
+
+    hf.flush();
+    std::printf("Hash file:    %s\n", hashes_path.c_str());
+}
+
 static int cmd_hash(const Args& args)
 {
     if (args.input.empty())
@@ -588,6 +705,9 @@ static int cmd_hash(const Args& args)
         if (has_flag(flags, HashFlags::CRC32) && !result.sheet_hash.crc32.hex_string.empty())
             std::printf("    CRC32:    %s\n", result.sheet_hash.crc32.hex_string.c_str());
     }
+
+    // Write .hashes file (default: <exe>/logs/, override with --hash-dir)
+    write_hashes_file(result, args.input, args.hash_dir, flags);
 
     log_info("hash OK: " + std::to_string(result.tracks.size()) + " tracks");
     return 0;
@@ -1003,6 +1123,15 @@ int main(int argc, char** argv)
     auto args = parse_args(argc, argv);
     g_input_file = args.input;
 
+    // Apply --log-dir override (must happen before any log_entry calls)
+    if (!args.log_dir.empty())
+    {
+        std::error_code ec;
+        g_logs_dir = fs::path(args.log_dir);
+        fs::create_directories(g_logs_dir, ec);
+        g_log_path = (g_logs_dir / "chdlite.log").string();
+    }
+
     // Set log level from -log option
     if (!args.log_level.empty())
     {
@@ -1024,8 +1153,18 @@ int main(int argc, char** argv)
     try
     {
         // Generic commands
-        if (cmd == "read" || cmd == "info")       return cmd_read(args);
-        if (cmd == "hash")                        return cmd_hash(args);
+        if (cmd == "read" || cmd == "info")
+        {
+            int rc = cmd_read(args);
+            if (is_standalone_launch()) pause_for_user();
+            return rc;
+        }
+        if (cmd == "hash")
+        {
+            int rc = cmd_hash(args);
+            if (is_standalone_launch()) pause_for_user();
+            return rc;
+        }
         if (cmd == "extract")                     return cmd_extract(args);
         if (cmd == "create")                      return cmd_create(args);
         if (cmd == "auto")                        return cmd_auto(args);
@@ -1080,6 +1219,7 @@ int main(int argc, char** argv)
                 }
                 if (paths.size() > 1)
                     std::printf("Done: %d OK, %d failed, %d total\n", ok, fail, ok + fail);
+                if (is_standalone_launch()) pause_for_user();
                 return fail > 0 ? 1 : 0;
             }
 

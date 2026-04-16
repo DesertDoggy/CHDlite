@@ -31,7 +31,13 @@ static int g_fail = 0;
 static int g_skip = 0;
 static int g_run_ok = 0;  // successful CLI invocations (for log verification)
 
-static const std::string LOG_PATH = "build/chdlite.log";
+static const std::string LOG_PATH = (fs::path("build") / "logs" / "chdlite.log").string();
+
+#ifdef _WIN32
+static const std::string CLI_EXE = "build\\chdlite.exe";
+#else
+static const std::string CLI_EXE = "./build/chdlite";
+#endif
 
 #define CLR_PASS "\033[32m"
 #define CLR_FAIL "\033[31m"
@@ -88,12 +94,12 @@ static int run(const std::string& args, std::string* output = nullptr)
     };
 
     // Build the actual command
-    std::string cmd = "./build/chdlite " + args + " 2>&1";
+    std::string cmd = CLI_EXE + " " + args + " 2>&1";
     if (output)
     {
-        // Capture to temp file
-        std::string tmp = "/tmp/chdlite_cli_test_out.txt";
-        cmd = "./build/chdlite " + args + " >" + tmp + " 2>&1";
+        // Capture to temp file (cross-platform temp dir)
+        std::string tmp = (fs::temp_directory_path() / "chdlite_cli_test_out.txt").string();
+        cmd = CLI_EXE + " " + args + " >\"" + tmp + "\" 2>&1";
         int rc = std::system(cmd.c_str());
         // Read output
         FILE* f = std::fopen(tmp.c_str(), "r");
@@ -175,10 +181,10 @@ static TestPaths discover_paths(const std::string& root)
 {
     TestPaths tp;
     tp.chd_root = root;
-    tp.out_root = root + "/cli_test_output";
+    tp.out_root = (fs::path(root) / "cli_test_output").string();
 
     auto find = [&](const std::string& subdir, const std::string& glob_base) -> std::string {
-        std::string dir = root + "/" + subdir;
+        std::string dir = (fs::path(root) / subdir).string();
         if (!fs::exists(dir)) return {};
         for (auto& e : fs::directory_iterator(dir))
             if (e.path().filename().string().find(glob_base) != std::string::npos)
@@ -201,7 +207,7 @@ static TestPaths discover_paths(const std::string& root)
 
     // Specific bins — find by exact name fragment
     auto find_specific = [&](const std::string& subdir, const std::string& name_fragment) -> std::string {
-        std::string dir = root + "/" + subdir;
+        std::string dir = (fs::path(root) / subdir).string();
         if (!fs::exists(dir)) return {};
         for (auto& e : fs::directory_iterator(dir))
             if (e.path().filename().string().find(name_fragment) != std::string::npos)
@@ -398,9 +404,9 @@ static void block_extract_cd(const TestPaths& tp)
     // 3a) Generic "extract" with -o, default split-bin
     if (tp.has(tp.saturn_chd))
     {
-        std::string dir = tp.out_root + "/b3a";
+        std::string dir = (fs::path(tp.out_root) / "b3a").string();
         fs::create_directories(dir);
-        std::string cue = dir + "/saturn.cue";
+        std::string cue = (fs::path(dir) / "saturn.cue").string();
         int rc = run("extract \"" + tp.saturn_chd + "\" -o \"" + cue + "\" -f", &out);
         check(rc == 0, "extract CD -o -f exits 0");
         check(file_exists(cue), "extract CD creates CUE file");
@@ -416,9 +422,9 @@ static void block_extract_cd(const TestPaths& tp)
     // 3b) Extract with --no-splitbin (single bin)
     if (tp.has(tp.pce_chd))
     {
-        std::string dir = tp.out_root + "/b3b";
+        std::string dir = (fs::path(tp.out_root) / "b3b").string();
         fs::create_directories(dir);
-        std::string cue = dir + "/pce.cue";
+        std::string cue = (fs::path(dir) / "pce.cue").string();
         int rc = run("extract \"" + tp.pce_chd + "\" -o \"" + cue + "\" --no-splitbin -f", &out);
         check(rc == 0, "extract --no-splitbin exits 0");
         check(file_exists(cue), "extract --no-splitbin creates CUE");
@@ -432,9 +438,9 @@ static void block_extract_cd(const TestPaths& tp)
     // 3c) Extract with -ob (output bin template) + -sb
     if (tp.has(tp.pce_chd))
     {
-        std::string dir = tp.out_root + "/b3c";
+        std::string dir = (fs::path(tp.out_root) / "b3c").string();
         fs::create_directories(dir);
-        std::string cue = dir + "/pce_tpl.cue";
+        std::string cue = (fs::path(dir) / "pce_tpl.cue").string();
         int rc = run("extract \"" + tp.pce_chd + "\" -o \"" + cue + "\" -sb -ob \"pce_t%t.bin\" -f", &out);
         check(rc == 0, "extract -ob -sb exits 0");
         check(file_exists(cue), "extract -ob creates CUE");
@@ -451,9 +457,9 @@ static void block_extract_cd(const TestPaths& tp)
     // 3d) extractcd (chdman-style) with -i -o
     if (tp.has(tp.ps1_chd))
     {
-        std::string dir = tp.out_root + "/b3d";
+        std::string dir = (fs::path(tp.out_root) / "b3d").string();
         fs::create_directories(dir);
-        std::string cue = dir + "/ps1.cue";
+        std::string cue = (fs::path(dir) / "ps1.cue").string();
         int rc = run("extractcd -i \"" + tp.ps1_chd + "\" -o \"" + cue + "\" -f", &out);
         check(rc == 0, "extractcd -i -o -f exits 0");
         check(file_exists(cue), "extractcd creates CUE");
@@ -465,7 +471,7 @@ static void block_extract_cd(const TestPaths& tp)
     // 3e) Extract without -f should fail if output exists (from 3d)
     if (tp.has(tp.ps1_chd))
     {
-        std::string cue = tp.out_root + "/b3d/ps1.cue";
+        std::string cue = (fs::path(tp.out_root) / "b3d" / "ps1.cue").string();
         if (file_exists(cue))
         {
             int rc = run("extractcd -i \"" + tp.ps1_chd + "\" -o \"" + cue + "\"", &out);
@@ -485,9 +491,9 @@ static void block_extract_dvd(const TestPaths& tp)
     // 4a) extractdvd with -i -o
     if (tp.has(tp.ps2_chd))
     {
-        std::string dir = tp.out_root + "/b4a";
+        std::string dir = (fs::path(tp.out_root) / "b4a").string();
         fs::create_directories(dir);
-        std::string iso = dir + "/ps2.iso";
+        std::string iso = (fs::path(dir) / "ps2.iso").string();
         int rc = run("extractdvd -i \"" + tp.ps2_chd + "\" -o \"" + iso + "\" -f", &out);
         check(rc == 0, "extractdvd -i -o -f exits 0");
         check(file_exists(iso), "extractdvd creates ISO");
@@ -499,9 +505,9 @@ static void block_extract_dvd(const TestPaths& tp)
     // 4b) extract DVD with -isb and -ib (partial: first 1MB)
     if (tp.has(tp.ps2_chd))
     {
-        std::string dir = tp.out_root + "/b4b";
+        std::string dir = (fs::path(tp.out_root) / "b4b").string();
         fs::create_directories(dir);
-        std::string bin = dir + "/ps2_partial.bin";
+        std::string bin = (fs::path(dir) / "ps2_partial.bin").string();
         int rc = run("extractraw -i \"" + tp.ps2_chd + "\" -o \"" + bin + "\" -isb 0 -ib 1048576 -f", &out);
         check(rc == 0, "extractraw -isb -ib exits 0");
         if (file_exists(bin))
@@ -518,9 +524,9 @@ static void block_extract_dvd(const TestPaths& tp)
     // 4c) extract DVD with -ish and -ih (hunk-based partial)
     if (tp.has(tp.ps2_chd))
     {
-        std::string dir = tp.out_root + "/b4c";
+        std::string dir = (fs::path(tp.out_root) / "b4c").string();
         fs::create_directories(dir);
-        std::string bin = dir + "/ps2_hunks.bin";
+        std::string bin = (fs::path(dir) / "ps2_hunks.bin").string();
         int rc = run("extractraw -i \"" + tp.ps2_chd + "\" -o \"" + bin + "\" -ish 0 -ih 100 -f", &out);
         check(rc == 0, "extractraw -ish -ih exits 0");
         if (file_exists(bin))
@@ -533,9 +539,9 @@ static void block_extract_dvd(const TestPaths& tp)
     // 4d) Generic "extract" for PSP (DVD) → auto ISO
     if (tp.has(tp.psp_chd))
     {
-        std::string dir = tp.out_root + "/b4d";
+        std::string dir = (fs::path(tp.out_root) / "b4d").string();
         fs::create_directories(dir);
-        std::string iso = dir + "/psp.iso";
+        std::string iso = (fs::path(dir) / "psp.iso").string();
         int rc = run("extract \"" + tp.psp_chd + "\" -o \"" + iso + "\" -f", &out);
         check(rc == 0, "extract PSP/DVD auto exits 0");
         check(file_exists(iso), "extract PSP creates ISO");
@@ -553,9 +559,9 @@ static void block_create_cd(const TestPaths& tp)
     // 5a) Generic "create" from CUE (auto-detect CD)
     if (tp.has(tp.pce_cue))
     {
-        std::string dir = tp.out_root + "/b5a";
+        std::string dir = (fs::path(tp.out_root) / "b5a").string();
         fs::create_directories(dir);
-        std::string chd = dir + "/pce_auto.chd";
+        std::string chd = (fs::path(dir) / "pce_auto.chd").string();
         int rc = run("create \"" + tp.pce_cue + "\" -o \"" + chd + "\" -f", &out);
         check(rc == 0, "create <CUE> auto exits 0");
         check(file_exists(chd), "create produces CHD");
@@ -567,9 +573,9 @@ static void block_create_cd(const TestPaths& tp)
     // 5b) createcd with custom compression -c cdzs,cdlz
     if (tp.has(tp.pce_cue))
     {
-        std::string dir = tp.out_root + "/b5b";
+        std::string dir = (fs::path(tp.out_root) / "b5b").string();
         fs::create_directories(dir);
-        std::string chd = dir + "/pce_cdzs.chd";
+        std::string chd = (fs::path(dir) / "pce_cdzs.chd").string();
         int rc = run("createcd -i \"" + tp.pce_cue + "\" -o \"" + chd + "\" -c cdzs,cdlz -f", &out);
         check(rc == 0, "createcd -c cdzs,cdlz exits 0");
         check(file_exists(chd), "createcd -c produces CHD");
@@ -580,9 +586,9 @@ static void block_create_cd(const TestPaths& tp)
     // 5c) createcd with -hs and -np (hunk size + num processors)
     if (tp.has(tp.pce_cue))
     {
-        std::string dir = tp.out_root + "/b5c";
+        std::string dir = (fs::path(tp.out_root) / "b5c").string();
         fs::create_directories(dir);
-        std::string chd = dir + "/pce_opts.chd";
+        std::string chd = (fs::path(dir) / "pce_opts.chd").string();
         int rc = run("createcd -i \"" + tp.pce_cue + "\" -o \"" + chd + "\" -hs 19584 -np 1 -f", &out);
         check(rc == 0, "createcd -hs -np exits 0");
         check(file_exists(chd), "createcd -hs -np produces CHD");
@@ -602,9 +608,9 @@ static void block_create_dvd(const TestPaths& tp)
     // 6a) createdvd with -c none (fast: no compression for large ISO)
     if (tp.has(tp.ps2_iso))
     {
-        std::string dir = tp.out_root + "/b6a";
+        std::string dir = (fs::path(tp.out_root) / "b6a").string();
         fs::create_directories(dir);
-        std::string chd = dir + "/ps2_none.chd";
+        std::string chd = (fs::path(dir) / "ps2_none.chd").string();
         int rc = run("createdvd -i \"" + tp.ps2_iso + "\" -o \"" + chd + "\" -c none -f", &out);
         check(rc == 0, "createdvd -c none exits 0");
         check(file_exists(chd), "createdvd none produces CHD");
@@ -615,9 +621,9 @@ static void block_create_dvd(const TestPaths& tp)
     // 6b) Generic "create" from ISO with -c none (auto-detect DVD)
     if (tp.has(tp.ps2_iso))
     {
-        std::string dir = tp.out_root + "/b6b";
+        std::string dir = (fs::path(tp.out_root) / "b6b").string();
         fs::create_directories(dir);
-        std::string chd = dir + "/ps2_auto.chd";
+        std::string chd = (fs::path(dir) / "ps2_auto.chd").string();
         int rc = run("create \"" + tp.ps2_iso + "\" -o \"" + chd + "\" -c none -f", &out);
         check(rc == 0, "create <ISO> auto DVD exits 0");
         check(file_exists(chd), "create ISO auto produces CHD");
@@ -635,9 +641,9 @@ static void block_auto(const TestPaths& tp)
     // 7a) auto with CHD → should extract
     if (tp.has(tp.saturn_chd))
     {
-        std::string dir = tp.out_root + "/b7a";
+        std::string dir = (fs::path(tp.out_root) / "b7a").string();
         fs::create_directories(dir);
-        std::string cue = dir + "/saturn_auto.cue";
+        std::string cue = (fs::path(dir) / "saturn_auto.cue").string();
         int rc = run("auto \"" + tp.saturn_chd + "\" -o \"" + cue + "\" -f", &out);
         check(rc == 0, "auto <CHD> exits 0");
         check(file_exists(cue), "auto <CHD> extracts to CUE");
@@ -647,9 +653,9 @@ static void block_auto(const TestPaths& tp)
     // 7b) auto with CUE → should create
     if (tp.has(tp.pce_cue))
     {
-        std::string dir = tp.out_root + "/b7b";
+        std::string dir = (fs::path(tp.out_root) / "b7b").string();
         fs::create_directories(dir);
-        std::string chd = dir + "/pce_auto.chd";
+        std::string chd = (fs::path(dir) / "pce_auto.chd").string();
         int rc = run("auto \"" + tp.pce_cue + "\" -o \"" + chd + "\" -f", &out);
         check(rc == 0, "auto <CUE> exits 0");
         check(file_exists(chd), "auto <CUE> creates CHD");
@@ -667,9 +673,9 @@ static void block_dragdrop(const TestPaths& tp)
     // 8a) Bare CHD path as first arg → auto extract
     if (tp.has(tp.pce_chd))
     {
-        std::string dir = tp.out_root + "/b8a";
+        std::string dir = (fs::path(tp.out_root) / "b8a").string();
         fs::create_directories(dir);
-        std::string cue = dir + "/pce_dd.cue";
+        std::string cue = (fs::path(dir) / "pce_dd.cue").string();
         int rc = run("\"" + tp.pce_chd + "\" -o \"" + cue + "\" -f", &out);
         check(rc == 0, "bare CHD path exits 0");
         check(file_exists(cue), "bare CHD path auto-extracts");
@@ -700,7 +706,8 @@ static void block_errors()
 
     // 9c) Read non-existent file → error
     {
-        int rc = run("read /tmp/nonexistent_chdlite_test.chd", &out);
+        std::string ne = (fs::temp_directory_path() / "nonexistent_chdlite_test.chd").string();
+        int rc = run("read \"" + ne + "\"", &out);
         check(rc != 0, "read nonexistent file exits non-zero");
     }
 
@@ -724,7 +731,8 @@ static void block_errors()
 
     // 9g) createcd without -o → error
     {
-        int rc = run("createcd -i /tmp/nonexistent.cue", &out);
+        std::string ne = (fs::temp_directory_path() / "nonexistent_chdlite_test.cue").string();
+        int rc = run("createcd -i \"" + ne + "\"", &out);
         check(rc != 0, "createcd without -o exits non-zero");
     }
 }
@@ -788,8 +796,9 @@ int main(int argc, char** argv)
     fs::remove_all(tp.out_root);
     fs::create_directories(tp.out_root);
 
-    // Delete activity log so we start fresh
-    fs::remove(LOG_PATH);
+    // Delete activity log so we start fresh (ignore error if it doesn't exist yet)
+    std::error_code ec_rm;
+    fs::remove(LOG_PATH, ec_rm);
 
     // Run all blocks
     block_read(tp);

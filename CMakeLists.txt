@@ -65,7 +65,7 @@ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
 endif()
 
 # Find external libraries
-find_package(ZLIB REQUIRED)
+find_package(zlib-ng CONFIG REQUIRED)
 find_package(zstd CONFIG REQUIRED)
 find_package(FLAC CONFIG REQUIRED)
 find_package(xxHash CONFIG REQUIRED)
@@ -158,7 +158,7 @@ endif()
 
 target_link_libraries(mame_chd_core
     PUBLIC
-        ZLIB::ZLIB
+        zlib-ng::zlib
         ${ZSTD_TARGET}
         FLAC::FLAC
         FLAC::FLAC++

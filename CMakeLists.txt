@@ -229,15 +229,16 @@ set_target_properties(chdlite_shared PROPERTIES
     OUTPUT_NAME chdlite                # DLL named: chdlite.dll
     PREFIX ""                          # No lib prefix
     SUFFIX ".dll"
+    ARCHIVE_OUTPUT_NAME chdlite_import # import lib: chdlite_import.lib (avoids clash with static chdlite.lib)
 )
 
 # Windows: copy import library with new name (cdhilite_shared.lib)
 if(WIN32)
     add_custom_command(TARGET chdlite_shared POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy
-            "${CMAKE_ARCHIVE_OUTPUT_DIRECTORY}/chdlite.lib"
-            "${CMAKE_ARCHIVE_OUTPUT_DIRECTORY}/cdhilite_shared.lib"
-        COMMENT "Creating cdhilite_shared.lib copy"
+            "${CMAKE_ARCHIVE_OUTPUT_DIRECTORY}/chdlite_import.lib"
+            "${CMAKE_ARCHIVE_OUTPUT_DIRECTORY}/chdlite_shared.lib"
+        COMMENT "Creating chdlite_shared.lib copy"
         VERBATIM
     )
 endif()

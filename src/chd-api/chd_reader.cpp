@@ -488,7 +488,7 @@ public:
         m_gdi = (type == ContentType::GDROM);
         m_num_tracks = num_tracks;
         if (m_gdi)
-            m_sheet << num_tracks << "\n";
+            m_sheet << num_tracks << "\r\n";
     }
 
     void on_track_begin(uint32_t track_num, TrackType track_type,
@@ -507,9 +507,9 @@ public:
         m_cur_pgdatasize = pgdatasize;
         m_cur_postgap = postgap;
 
-        // Build bin filename using same convention as extractor
+        // Build bin filename using chdman convention (default)
         if (m_num_tracks == 1 && !m_gdi)
-            m_cur_bin_name = m_stem + ".bin";
+            m_cur_bin_name = m_stem + " (Track 1).bin";
         else if (m_gdi)
         {
             char buf[8];
@@ -541,33 +541,33 @@ public:
                     << gdi_type << " "
                     << m_cur_datasize << " "
                     << "\"" << m_cur_bin_name << "\" "
-                    << 0 << "\n";
+                    << 0 << "\r\n";
             m_logframeofs += m_cur_toc_frames;
         }
         else
         {
-            m_sheet << "FILE \"" << m_cur_bin_name << "\" BINARY\n";
+            m_sheet << "FILE \"" << m_cur_bin_name << "\" BINARY\r\n";
             char tnum[8];
             std::snprintf(tnum, sizeof(tnum), "%02u", m_cur_track);
             m_sheet << "  TRACK " << tnum << " "
-                    << cue_track_type_string(m_cur_type, m_cur_datasize) << "\n";
+                    << cue_track_type_string(m_cur_type, m_cur_datasize) << "\r\n";
             // Pregap handling (split-bin: each file starts at offset 0)
             if (m_cur_pregap > 0 && m_cur_pgdatasize == 0)
             {
-                m_sheet << "    PREGAP " << msf_from_frames(m_cur_pregap) << "\n";
-                m_sheet << "    INDEX 01 00:00:00\n";
+                m_sheet << "    PREGAP " << msf_from_frames(m_cur_pregap) << "\r\n";
+                m_sheet << "    INDEX 01 00:00:00\r\n";
             }
             else if (m_cur_pregap > 0 && m_cur_pgdatasize > 0)
             {
-                m_sheet << "    INDEX 00 00:00:00\n";
-                m_sheet << "    INDEX 01 " << msf_from_frames(m_cur_pregap) << "\n";
+                m_sheet << "    INDEX 00 00:00:00\r\n";
+                m_sheet << "    INDEX 01 " << msf_from_frames(m_cur_pregap) << "\r\n";
             }
             else
             {
-                m_sheet << "    INDEX 01 00:00:00\n";
+                m_sheet << "    INDEX 01 00:00:00\r\n";
             }
             if (m_cur_postgap > 0)
-                m_sheet << "    POSTGAP " << msf_from_frames(m_cur_postgap) << "\n";
+                m_sheet << "    POSTGAP " << msf_from_frames(m_cur_postgap) << "\r\n";
         }
     }
 

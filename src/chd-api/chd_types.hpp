@@ -96,6 +96,26 @@ enum class HashOutputFormat
     JSON     // JSON object
 };
 
+// ======================> CUE sheet naming/format style
+
+enum class CueStyle : int
+{
+    Chdman         = 0,   // (Track N) suffix always, no CATALOG — matches chdman output
+    Redump         = 1,   // no (Track 1) for single-track, no CATALOG
+    RedumpCatalog  = 2,   // Redump naming + CATALOG 0000000000000 header
+    // 3..254 reserved for future styles
+    Unmatched      = 255, // sentinel: no style matched the database hash
+};
+
+/// Result of match_cue(): identifies which CUE style matches a database hash.
+struct CueMatchResult
+{
+    CueStyle        style = CueStyle::Unmatched;
+    std::string     cue_data;       // converted CUE text (empty if unmatched)
+    HashAlgorithm   hash_type = HashAlgorithm::SHA1;
+    std::string     cue_hash;       // hex hash of the matched CUE (empty if unmatched)
+};
+
 // ======================> CD system detection for smart codec defaults
 
 enum class GamePlatform
@@ -272,6 +292,7 @@ struct ExtractOptions
     bool        force_raw = false;      // extract raw hunks (no format interpretation)
 
     // CD-specific (chdman extractcd equivalents)
+    CueStyle    cue_style = CueStyle::Chdman;  // CUE naming convention
     std::string output_bin;             // override bin filename template (chdman: --outputbin)
     bool        split_bin = true;       // split into per-track bin files (chdman: --splitbin, default true)
 

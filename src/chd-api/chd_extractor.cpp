@@ -7,6 +7,7 @@
 
 #include "chd.h"
 #include "cdrom.h"
+#include "hashing.h"
 
 #include <algorithm>
 #include <cstring>
@@ -85,9 +86,11 @@ class CdFileSink : public ProcessorSink
 public:
     CdFileSink(const std::string& out_dir, const std::string& stem,
                bool gdi_mode, bool split_bin,
+               CueStyle cue_style = CueStyle::Chdman,
                const std::string& bin_template = {})
         : m_out_dir(out_dir), m_stem(stem)
         , m_gdi_mode(gdi_mode), m_split_bin(split_bin)
+        , m_cue_style(cue_style)
         , m_bin_template(bin_template) {}
 
     void on_begin(ContentType type, uint32_t num_tracks) override
@@ -96,6 +99,8 @@ public:
         // Use \r\n line endings to match chdman output (cue/gdi are always CRLF)
         if (m_gdi_mode)
             m_meta << num_tracks << "\r\n";
+        else if (m_cue_style == CueStyle::RedumpCatalog)
+            m_meta << "CATALOG 0000000000000\r\n";
     }
 
     void on_track_begin(uint32_t track_num, TrackType track_type,
@@ -133,7 +138,10 @@ public:
         }
         else if (m_num_tracks == 1 && !m_gdi_mode)
         {
-            m_cur_bin_name = m_stem + ".bin";
+            if (m_cue_style == CueStyle::Chdman)
+                m_cur_bin_name = m_stem + " (Track 1).bin";
+            else
+                m_cur_bin_name = m_stem + ".bin";
         }
         else if (m_gdi_mode)
         {
@@ -247,6 +255,7 @@ private:
     std::string m_stem;
     bool m_gdi_mode;
     bool m_split_bin;
+    CueStyle m_cue_style;
     std::string m_bin_template;
     uint32_t m_num_tracks = 0;
 
@@ -393,7 +402,7 @@ ExtractionResult ChdExtractor::extract_impl(const std::string& chd_path,
 
         // GDI and GD-ROM CUE always force split
         bool split = options.split_bin || gdi_mode;
-        CdFileSink sink(out_dir, stem, gdi_mode, split, options.output_bin);
+        CdFileSink sink(out_dir, stem, gdi_mode, split, options.cue_style, options.output_bin);
         std::vector<ProcessorSink*> sinks = { &sink };
 
         auto proc_result = ChdProcessor::process(chd_path, sinks, options.progress_callback);
@@ -466,6 +475,183 @@ ExtractionResult ChdExtractor::extract_impl(const std::string& chd_path,
     }
 
     return result;
+}
+
+// ======================> CUE style converter
+
+std::string convert_cue_style(const std::string& cue_text, CueStyle to)
+{
+    // Normalize to LF, split into lines
+    std::vector<std::string> lines;
+    {
+        std::string buf;
+        buf.reserve(cue_text.size());
+        for (size_t i = 0; i < cue_text.size(); ++i)
+        {
+            if (cue_text[i] == '\r')
+            {
+                buf += '\n';
+                if (i + 1 < cue_text.size() && cue_text[i + 1] == '\n')
+                    ++i;
+            }
+            else
+                buf += cue_text[i];
+        }
+        std::istringstream iss(buf);
+        std::string line;
+        while (std::getline(iss, line))
+            lines.push_back(std::move(line));
+    }
+
+    // Strip trailing empty lines
+    while (!lines.empty() && lines.back().empty())
+        lines.pop_back();
+
+    // Detect and strip existing CATALOG line
+    size_t start = 0;
+    if (!lines.empty() && lines[0].compare(0, 7, "CATALOG") == 0)
+        start = 1;
+
+    // Count FILE directives to detect single-track disc
+    int file_count = 0;
+    for (size_t i = start; i < lines.size(); ++i)
+        if (lines[i].compare(0, 5, "FILE ") == 0)
+            ++file_count;
+
+    bool single_track = (file_count == 1);
+
+    // Build output with CRLF
+    std::ostringstream out;
+
+    if (to == CueStyle::RedumpCatalog)
+        out << "CATALOG 0000000000000\r\n";
+
+    for (size_t i = start; i < lines.size(); ++i)
+    {
+        std::string l = lines[i];
+
+        // Adjust single-track FILE line
+        if (single_track && l.compare(0, 5, "FILE ") == 0)
+        {
+            auto q1 = l.find('"');
+            auto q2 = l.rfind('"');
+            if (q1 != std::string::npos && q1 != q2)
+            {
+                std::string fname = l.substr(q1 + 1, q2 - q1 - 1);
+                std::string prefix = l.substr(0, q1 + 1);
+                std::string suffix = l.substr(q2);
+
+                if (to == CueStyle::Chdman)
+                {
+                    // Ensure (Track 1) suffix
+                    if (fname.find(" (Track ") == std::string::npos)
+                    {
+                        auto dot = fname.rfind('.');
+                        if (dot != std::string::npos)
+                            fname = fname.substr(0, dot) + " (Track 1)" + fname.substr(dot);
+                    }
+                }
+                else
+                {
+                    // Remove (Track 1) or (Track 01) suffix
+                    for (const char* pat : {" (Track 1)", " (Track 01)"})
+                    {
+                        auto pos = fname.find(pat);
+                        if (pos != std::string::npos)
+                        {
+                            fname.erase(pos, std::strlen(pat));
+                            break;
+                        }
+                    }
+                }
+                l = prefix + fname + suffix;
+            }
+        }
+
+        out << l << "\r\n";
+    }
+
+    return out.str();
+}
+
+void convert_cue_file(const std::string& input_path,
+                      const std::string& output_path,
+                      CueStyle to)
+{
+    // Read input CUE
+    std::ifstream in(input_path, std::ios::binary);
+    if (!in)
+        throw ChdException("convert_cue_file: cannot open input: " + input_path);
+    std::string cue_text((std::istreambuf_iterator<char>(in)),
+                          std::istreambuf_iterator<char>());
+    in.close();
+
+    std::string result = convert_cue_style(cue_text, to);
+
+    const std::string& dest = output_path.empty() ? input_path : output_path;
+    std::ofstream out(dest, std::ios::binary | std::ios::trunc);
+    if (!out)
+        throw ChdException("convert_cue_file: cannot open output: " + dest);
+    out.write(result.data(), static_cast<std::streamsize>(result.size()));
+}
+
+// ======================> match_cue: try all styles, return the one matching db_hash
+
+static std::string compute_cue_hash(const std::string& data, HashAlgorithm algo)
+{
+    switch (algo)
+    {
+    case HashAlgorithm::SHA1:
+        return util::sha1_creator::simple(data.data(), static_cast<uint32_t>(data.size())).as_string();
+    case HashAlgorithm::MD5:
+        return util::md5_creator::simple(data.data(), static_cast<uint32_t>(data.size())).as_string();
+    case HashAlgorithm::CRC32:
+        return util::crc32_creator::simple(data.data(), static_cast<uint32_t>(data.size())).as_string();
+    case HashAlgorithm::SHA256:
+        return util::sha256_creator::simple(data.data(), static_cast<uint32_t>(data.size())).as_string();
+    default:
+        return {};
+    }
+}
+
+static bool hash_equal_icase(const std::string& a, const std::string& b)
+{
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i)
+    {
+        char ca = static_cast<char>(std::tolower(static_cast<unsigned char>(a[i])));
+        char cb = static_cast<char>(std::tolower(static_cast<unsigned char>(b[i])));
+        if (ca != cb) return false;
+    }
+    return true;
+}
+
+CueMatchResult match_cue(const std::string& cue_data,
+                          HashAlgorithm hash_type,
+                          const std::string& db_hash)
+{
+    static constexpr CueStyle styles[] = {
+        CueStyle::Chdman,
+        CueStyle::Redump,
+        CueStyle::RedumpCatalog,
+    };
+
+    for (CueStyle s : styles)
+    {
+        std::string converted = convert_cue_style(cue_data, s);
+        std::string h = compute_cue_hash(converted, hash_type);
+        if (!h.empty() && hash_equal_icase(h, db_hash))
+        {
+            CueMatchResult r;
+            r.style     = s;
+            r.cue_data  = std::move(converted);
+            r.hash_type = hash_type;
+            r.cue_hash  = std::move(h);
+            return r;
+        }
+    }
+
+    return {}; // Unmatched
 }
 
 } // namespace chdlite

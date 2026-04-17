@@ -48,6 +48,26 @@ private:
                                   const ExtractOptions& options);
 };
 
+/// Convert CUE sheet text to a different naming/format style.
+/// Handles single-track filename differences and CATALOG header.
+/// Input may use any line ending; output always uses CRLF.
+std::string convert_cue_style(const std::string& cue_text, CueStyle to);
+
+/// File-based CUE style conversion.
+/// Reads input CUE, converts to the given style, writes to output path.
+/// If output_path is empty, overwrites the input file.
+void convert_cue_file(const std::string& input_path,
+                      const std::string& output_path,
+                      CueStyle to);
+
+/// Try all CUE styles and return the one whose hash matches the database hash.
+/// Converts cue_data to each style, hashes with the given algorithm, and
+/// compares to db_hash (case-insensitive hex).  Returns CueStyle::Unmatched
+/// if none match.
+CueMatchResult match_cue(const std::string& cue_data,
+                         HashAlgorithm hash_type,
+                         const std::string& db_hash);
+
 } // namespace chdlite
 
 #endif // CHDLITE_CHD_EXTRACTOR_HPP

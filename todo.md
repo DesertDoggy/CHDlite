@@ -67,12 +67,12 @@
   #### What our CHD samples actually use (from `chdlite read`)
   | File | Platform | Content | Compression |
   |------|----------|---------|-------------|
-  | PoPoRoGue (Japan).chd | PS1 | CD-ROM 1 track data | `cdlz, cdzl, cdfl` |
-  | Sakura Taisen (Disc 1).chd | Saturn | CD-ROM 2 tracks (1 audio) | `cdlz, cdzl, cdfl` |
-  | Dragon Half (Japan).chd | PC Engine | CD-ROM 22 tracks (20 audio) | `cdzs, cdfl` |
-  | D2 Disc 1.chd | Dreamcast | GD-ROM 3 tracks (1 audio) | `cdzs, cdzl, cdfl` |
-  | Dragon Quest V.chd | PS2 | DVD | `zlib` |
-  | Final Fantasy IV CC.chd | PSP | DVD | `zstd` |
+  | PS1 | CD-ROM 1 track data | `cdlz, cdzl, cdfl` |
+  | Saturn | CD-ROM 2 tracks (1 audio) | `cdlz, cdzl, cdfl` |
+  | | PC Engine | CD-ROM 22 tracks (20 audio) | `cdzs, cdfl` |
+  | Dreamcast | GD-ROM 3 tracks (1 audio) | `cdzs, cdzl, cdfl` |
+  | PS2 | DVD | `zlib` |
+  | PSP | DVD | `zstd` |
 
   #### Benchmark results — confirmed (see Documents/Codec_Benchmark_Results.md)
   M4 MacBook Air, 4 threads, real disc images:

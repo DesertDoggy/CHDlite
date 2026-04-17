@@ -301,6 +301,9 @@ target_link_libraries(detect_test PRIVATE chdlite)
 add_executable(archive_test tests/archive_test.cpp)
 target_link_libraries(archive_test PRIVATE chdlite)
 
+add_executable(cue_style_test tests/cue_style_test.cpp)
+target_link_libraries(cue_style_test PRIVATE chdlite)
+
 add_executable(cli_test tests/cli_test.cpp)
 # cli_test only uses std::system() to invoke the CLI binary, no library link needed
 

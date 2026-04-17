@@ -312,6 +312,7 @@ struct Args
     std::string log_dir;                // --log-dir <path>        override activity log directory
     std::string hash_dir;               // --hash-dir <path|"disc"> override .hashes output dir
                                         //   "disc" = next to input file
+    int         cue_style = -1;          // -style 0/1/2 → CueStyle::Chdman/Redump/RedumpCatalog (-1 = default)
 };
 
 static void print_usage()
@@ -337,6 +338,7 @@ static void print_usage()
         "  extractdvd -i <input.chd> -o <output> [opts]   Extract DVD from CHD\n"
         "  extractraw -i <input.chd> -o <output> [opts]   Extract raw from CHD\n"
         "  extracthd  -i <input.chd> -o <output> [opts]   Extract hard disk from CHD\n"
+        "  convertcue -i <input.cue> [-o <output.cue>] -style <n>  Convert CUE style\n"
         "\n"
         "Options:\n"
         "  -i, --input <file>          Input file\n"
@@ -361,6 +363,7 @@ static void print_usage()
         "                              Default: <exe>/logs/  Special: \"disc\" = next to input\n"
         "  -log <level>                Log level: info, error, none (default: info)\n"
         "  --log-dir <path>            Directory for chdlite.log  (default: <exe>/logs/)\n"
+        "  -style <n>                  CUE style: 0=chdman 1=redump 2=redump+catalog\n"
         "  -v, --verbose               Verbose output\n"
         "\n",
         VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH
@@ -449,6 +452,7 @@ static Args parse_args(int argc, char** argv)
         else if (arg == "-log" || arg == "--log")       a.log_level = next();
         else if (arg == "--log-dir")                    a.log_dir = next();
         else if (arg == "--hash-dir")                   a.hash_dir = next();
+        else if (arg == "-style" || arg == "--style" || arg == "--cue-style") a.cue_style = std::stoi(next());
         else if (arg == "-hash" || arg == "--hash")
         {
             // -hash with optional value: if next arg looks like a flag, use default SHA1
@@ -469,6 +473,28 @@ static Args parse_args(int argc, char** argv)
 }
 
 // ======================> Command implementations
+
+// Map CLI -style integer (0/1/2) to CueStyle enum.
+// Returns CueStyle::Unmatched if invalid.
+static CueStyle parse_cue_style(int n)
+{
+    switch (n) {
+    case 0: return CueStyle::Chdman;
+    case 1: return CueStyle::Redump;
+    case 2: return CueStyle::RedumpCatalog;
+    default: return CueStyle::Unmatched;
+    }
+}
+
+static const char* cue_style_name(CueStyle s)
+{
+    switch (s) {
+    case CueStyle::Chdman:        return "chdman";
+    case CueStyle::Redump:        return "redump";
+    case CueStyle::RedumpCatalog: return "redump+catalog";
+    default:                      return "unknown";
+    }
+}
 
 static int cmd_read(const Args& args)
 {
@@ -791,6 +817,10 @@ static int cmd_extract(const Args& args)
     opts.input_frames = args.input_frames;
     opts.hash = args.hash;
 
+    // CUE style override
+    if (args.cue_style >= 0 && args.cue_style <= 2)
+        opts.cue_style = parse_cue_style(args.cue_style);
+
     // Split-bin: default true, overridable with --no-splitbin
     opts.split_bin = args.no_splitbin ? false : true;
 
@@ -1038,6 +1068,10 @@ static int cmd_extract_typed(const Args& args, const char* type_hint)
     opts.hash = args.hash;
     opts.split_bin = args.no_splitbin ? false : true;
 
+    // CUE style override
+    if (args.cue_style >= 0 && args.cue_style <= 2)
+        opts.cue_style = parse_cue_style(args.cue_style);
+
     fs::path out(args.output);
     opts.output_dir = out.parent_path().string();
     opts.output_filename = out.filename().string();
@@ -1077,6 +1111,33 @@ static int cmd_extract_typed(const Args& args, const char* type_hint)
     std::printf("Extraction complete\n");
 
     log_info(std::string("extract") + type_hint + " OK: " + std::to_string(result.bytes_written) + " bytes");
+    return 0;
+}
+
+// ======================> convertcue command
+
+static int cmd_convertcue(const Args& args)
+{
+    if (args.input.empty())
+    {
+        std::fprintf(stderr, "Error: no input file specified\n");
+        return 1;
+    }
+    if (args.cue_style < 0 || args.cue_style > 2)
+    {
+        std::fprintf(stderr, "Error: -style required (0=chdman, 1=redump, 2=redump+catalog)\n");
+        return 1;
+    }
+
+    auto style = parse_cue_style(args.cue_style);
+
+    std::string out_path = args.output.empty() ? args.input : args.output;
+
+    convert_cue_file(args.input, out_path, style);
+
+    std::printf("Converted: %s -> %s (style: %s)\n",
+                args.input.c_str(), out_path.c_str(), cue_style_name(style));
+    log_info("convertcue OK: " + out_path + " style=" + cue_style_name(style));
     return 0;
 }
 
@@ -1337,6 +1398,7 @@ int main(int argc, char** argv)
         if (cmd == "extractdvd")                  return cmd_extract_typed(args, "dvd");
         if (cmd == "extractraw")                  return cmd_extract_typed(args, "raw");
         if (cmd == "extracthd")                   return cmd_extract_typed(args, "hd");
+        if (cmd == "convertcue")                   return cmd_convertcue(args);
 
         // Check if first arg is a file or directory (drag-and-drop / bare input)
         if (fs::exists(args.command))

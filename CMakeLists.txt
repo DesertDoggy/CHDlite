@@ -312,14 +312,16 @@ add_executable(chdlite_cli src/cli/chdlite_cli.cpp)
 target_link_libraries(chdlite_cli PRIVATE chdlite spdlog::spdlog)
 set_target_properties(chdlite_cli PROPERTIES OUTPUT_NAME chdlite)
 
-# Create chdread / chdhash aliases (symlinks on Unix, copies on Windows)
+# Create chdread / chdhash / chdcomp aliases (symlinks on Unix, copies on Windows)
 if(WIN32)
     add_custom_command(TARGET chdlite_cli POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy
             "$<TARGET_FILE:chdlite_cli>" "$<TARGET_FILE_DIR:chdlite_cli>/chdread.exe"
         COMMAND ${CMAKE_COMMAND} -E copy
             "$<TARGET_FILE:chdlite_cli>" "$<TARGET_FILE_DIR:chdlite_cli>/chdhash.exe"
-        COMMENT "Creating chdread.exe and chdhash.exe copies"
+        COMMAND ${CMAKE_COMMAND} -E copy
+            "$<TARGET_FILE:chdlite_cli>" "$<TARGET_FILE_DIR:chdlite_cli>/chdcomp.exe"
+        COMMENT "Creating chdread.exe, chdhash.exe, and chdcomp.exe copies"
     )
 else()
     add_custom_command(TARGET chdlite_cli POST_BUILD
@@ -327,7 +329,9 @@ else()
             "chdlite" "$<TARGET_FILE_DIR:chdlite_cli>/chdread"
         COMMAND ${CMAKE_COMMAND} -E create_symlink
             "chdlite" "$<TARGET_FILE_DIR:chdlite_cli>/chdhash"
-        COMMENT "Creating chdread and chdhash symlinks"
+        COMMAND ${CMAKE_COMMAND} -E create_symlink
+            "chdlite" "$<TARGET_FILE_DIR:chdlite_cli>/chdcomp"
+        COMMENT "Creating chdread, chdhash, and chdcomp symlinks"
     )
     # Self-sign on macOS to avoid Gatekeeper warnings
     if(APPLE)

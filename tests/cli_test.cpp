@@ -31,7 +31,7 @@ static int g_fail = 0;
 static int g_skip = 0;
 static int g_run_ok = 0;  // successful CLI invocations (for log verification)
 
-static const std::string LOG_PATH = (fs::path("build") / "logs" / "chdlite.log").string();
+static const std::string LOG_PATH = (fs::path("build") / "logs" / "error.log").string();
 
 #ifdef _WIN32
 static const std::string CLI_EXE = "build\\chdlite.exe";
@@ -742,7 +742,7 @@ static void block_log()
     std::printf(CLR_BOLD "\n=== Block 10: activity log ===" CLR_RST "\n");
 
     // The log file should exist after all the successful CLI runs above
-    check(file_exists(LOG_PATH), "chdlite.log exists");
+    check(file_exists(LOG_PATH), "error.log exists");
 
     if (file_exists(LOG_PATH))
     {

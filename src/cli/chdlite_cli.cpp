@@ -48,8 +48,8 @@ namespace fs = std::filesystem;
 using namespace chdlite;
 
 // ======================> Activity log + Pretty log
-// Appends to chdlite.log (machine-parseable single-line, pipe-delimited).
-// Optionally appends to chdlite-pretty.log (human-readable multi-line indented).
+// Appends to error.log (machine-parseable single-line, pipe-delimited) - for errors mainly.
+// Optionally appends to chdread.log / chdhash.log / chdcomp.log etc (human-readable multi-line indented).
 // Records: timestamp, version, full command line, status (OK or error).
 // Log level control via --log <level>: info, error, none, debug, warning, critical
 // Override with --log <level> for structured log detail
@@ -59,10 +59,11 @@ static constexpr LogLevel LOG_LEVEL_DEFAULT = LogLevel::Info;
 
 static LogLevel      g_log_level = LOG_LEVEL_DEFAULT;
 static bool          g_pretty_log_enabled = false;
+static std::string   g_current_command;  // set by main() for command-specific pretty log names
 static std::string   g_cmdline;
 static std::string   g_input_file;
-static std::shared_ptr<spdlog::logger> g_logger;          // structured log (chdlite.log)
-static std::shared_ptr<spdlog::logger> g_pretty_logger;   // pretty log (chdlite-pretty.log)
+static std::shared_ptr<spdlog::logger> g_logger;          // structured log (error.log)
+static std::shared_ptr<spdlog::logger> g_pretty_logger;   // pretty log (chdread.log/chdhash.log/etc)
 static fs::path g_logs_dir;  // set by init_log / --log-dir, used for hash output default
 
 static void init_log(int argc, char** argv)
@@ -84,8 +85,8 @@ static void init_log(int argc, char** argv)
     g_logs_dir = (ec || exe_dir.empty()) ? fs::path("logs") : exe_dir / "logs";
     fs::create_directories(g_logs_dir, ec);
     
-    // Initialize structured log (chdlite.log)
-    std::string structured_log_path = (g_logs_dir / "chdlite.log").string();
+    // Initialize structured log (error.log - kept for errors/important info)
+    std::string structured_log_path = (g_logs_dir / "error.log").string();
     auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(structured_log_path, false /*truncate=false, i.e. append*/);
     g_logger = std::make_shared<spdlog::logger>("chdlite", file_sink);
     g_logger->set_pattern("[%Y-%m-%d %H:%M:%S] [%l] %v");
@@ -109,12 +110,14 @@ static LogLevel parse_log_level(const std::string& s)
     return LogLevel::Info;  // default to info
 }
 
-// Ensure pretty logger is initialized
+// Ensure pretty logger is initialized with command-specific filename
 static void ensure_pretty_logger()
 {
     if (g_pretty_logger) return;
     
-    std::string pretty_log_path = (g_logs_dir / "chdlite-pretty.log").string();
+    // Build command-specific pretty log name: chd<cmd>.log
+    std::string pretty_log_name = "chd" + g_current_command + ".log";
+    std::string pretty_log_path = (g_logs_dir / pretty_log_name).string();
     auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(pretty_log_path, false);
     g_pretty_logger = std::make_shared<spdlog::logger>("chdlite-pretty", file_sink);
     g_pretty_logger->set_pattern("%v");  // no timestamp prefix for pretty log
@@ -787,14 +790,13 @@ static int cmd_read(const Args& args)
                 fields["raw_sha1"] = hdr.raw_sha1;
             if (hdr.content_type == ContentType::CDROM || hdr.content_type == ContentType::GDROM)
                 fields["tracks"] = std::to_string(hdr.tracks.size());
+            // Always log platform, title, and manufacturer_id, using N/A if empty
             if (det.game_platform != GamePlatform::Unknown)
-            {
                 fields["platform"] = game_platform_name(det.game_platform);
-                if (!det.title.empty())
-                    fields["title"] = det.title;
-                if (!det.manufacturer_id.empty())
-                    fields["manufacturer_id"] = det.manufacturer_id;
-            }
+            else
+                fields["platform"] = "N/A";
+            fields["title"] = det.title.empty() ? "N/A" : det.title;
+            fields["manufacturer_id"] = det.manufacturer_id.empty() ? "N/A" : det.manufacturer_id;
             fields["input"] = args.input;
             log_pretty("read", fields);
         }
@@ -1856,8 +1858,8 @@ static int cmd_auto_batch(const Args& base_args, const std::vector<std::string>&
     return fail.load() > 0 ? 1 : 0;
 }
 
-// Determine default mode from argv[0]: "chdread" → read, "chdhash" → hash, else → auto
-enum class BinaryMode { Auto, Read, Hash };
+// Determine default mode from argv[0]: "chdread" → read, "chdhash" → hash, "chdcomp" → comp, else → auto
+enum class BinaryMode { Auto, Read, Hash, Comp };
 
 static BinaryMode detect_binary_mode(const char* argv0)
 {
@@ -1865,6 +1867,7 @@ static BinaryMode detect_binary_mode(const char* argv0)
     for (auto& c : name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     if (name == "chdread")  return BinaryMode::Read;
     if (name == "chdhash")  return BinaryMode::Hash;
+    if (name == "chdcomp")  return BinaryMode::Comp;
     return BinaryMode::Auto;
 }
 
@@ -1884,6 +1887,13 @@ int main(int argc, char** argv)
 
     auto args = parse_args(argc, argv);
     g_input_file = args.input;
+
+    // Apply Comp mode: force --best if not conflict with create/extracting
+    if (mode == BinaryMode::Comp && !args.best)
+    {
+        // Apply best compression for create/archive operations
+        args.best = true;
+    }
 
     // Apply --log-dir override (must happen before any log_entry calls)
     if (!args.log_dir.empty())
@@ -1910,8 +1920,9 @@ int main(int argc, char** argv)
 
     // Lowercase the command
     for (auto& c : cmd) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-
-    // Determine pretty log default based on command, then check --result override
+    
+    // Set for command-specific pretty log naming
+    g_current_command = cmd;
     bool pretty_log_default = false;
     if (cmd == "read" || cmd == "info" || cmd == "hash")
     {

@@ -1,6 +1,6 @@
 {
   "name": "chdlite",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Cross-platform CHD file library and tools",
   "builtin-baseline": "544a4c5c297e60e4ac4a5a1810df66748d908869",
   "dependencies": [

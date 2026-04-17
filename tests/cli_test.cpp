@@ -34,9 +34,9 @@ static int g_run_ok = 0;  // successful CLI invocations (for log verification)
 static const std::string LOG_PATH = (fs::path("build") / "logs" / "error.log").string();
 
 #ifdef _WIN32
-static const std::string CLI_EXE = "build\\chdlite.exe";
+static const std::string CLI_EXE = "Release\\bin\\chdlite.exe";
 #else
-static const std::string CLI_EXE = "./build/chdlite";
+static const std::string CLI_EXE = "./Release/bin/chdlite";
 #endif
 
 #define CLR_PASS "\033[32m"

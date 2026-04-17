@@ -43,6 +43,11 @@ public:
                           const std::string& output_path,
                           const ArchiveOptions& options = {});
 
+    /// Copy (re-compress) an existing CHD to a new CHD with different codecs/hunk_size.
+    ArchiveResult copy(const std::string& input_path,
+                       const std::string& output_path,
+                       const ArchiveOptions& options = {});
+
     /// Strict input validation (default: true).
     /// When enabled, a 2048-byte ISO that produces conflicting CD and DVD platform
     /// detections throws ChdFormatException instead of proceeding with a best-guess format.

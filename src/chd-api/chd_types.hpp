@@ -199,6 +199,18 @@ struct TrackHashResult
     HashResult  xxh3_128;
 };
 
+struct VerifyResult
+{
+    bool        success = false;
+    bool        raw_sha1_match = false;
+    bool        overall_sha1_match = false;
+    std::string computed_raw_sha1;
+    std::string computed_overall_sha1;
+    std::string header_raw_sha1;
+    std::string header_overall_sha1;
+    std::string error_message;
+};
+
 struct ContentHashResult
 {
     bool        success;

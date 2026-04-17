@@ -314,6 +314,9 @@ struct Args
                                         //   "disc" = next to input file
     int         cue_style = -1;          // -style 0/1/2 → CueStyle::Chdman/Redump/RedumpCatalog (-1 = default)
     bool        best = false;             // --best → maximum compression ratio
+    bool        fix = false;              // --fix → verify: fix SHA1 mismatch by updating header
+    std::string meta_tag;                 // -t → dumpmeta: 4-char metadata tag (e.g. "CHTR")
+    int         meta_index = 0;           // -ix → dumpmeta: metadata index (default: 0)
 };
 
 static void print_usage()
@@ -331,6 +334,8 @@ static void print_usage()
         "chdman-compatible commands:\n"
         "  info       -i <input.chd>                      Display CHD info\n"
         "  verify     -i <input.chd> [--fix]              Verify CHD integrity\n"
+        "  copy       -i <input.chd> [-o <output.chd>]    Re-compress CHD with different codecs\n"
+        "  dumpmeta   -i <input.chd> -t <tag> [-ix <n>]   Dump raw metadata by tag\n"
         "  createcd   -i <input> -o <output.chd> [opts]   Create CD CHD\n"
         "  createdvd  -i <input> -o <output.chd> [opts]   Create DVD CHD\n"
         "  createraw  -i <input> -o <output.chd> [opts]   Create raw CHD\n"
@@ -365,6 +370,9 @@ static void print_usage()
         "  -log <level>                Log level: info, error, none (default: info)\n"
         "  --log-dir <path>            Directory for chdlite.log  (default: <exe>/logs/)\n"
         "  --best                      Maximum compression (zstd+lzma+zlib / flac)\n"
+        "  --fix                       Verify: fix SHA1 mismatch by updating header\n"
+        "  -t, --tag <tag>             Dumpmeta: 4-char metadata tag (e.g. CHTR, DVD )\n"
+        "  -ix, --index <n>            Dumpmeta: metadata index (default: 0)\n"
         "  -style <n>                  CUE style: 0=chdman 1=redump 2=redump+catalog\n"
         "  -v, --verbose               Verbose output\n"
         "\n",
@@ -456,6 +464,9 @@ static Args parse_args(int argc, char** argv)
         else if (arg == "--hash-dir")                   a.hash_dir = next();
         else if (arg == "-style" || arg == "--style" || arg == "--cue-style") a.cue_style = std::stoi(next());
         else if (arg == "--best")                       a.best = true;
+        else if (arg == "--fix")                        a.fix = true;
+        else if (arg == "-t" || arg == "--tag")         a.meta_tag = next();
+        else if (arg == "-ix" || arg == "--index")      a.meta_index = std::stoi(next());
         else if (arg == "-hash" || arg == "--hash")
         {
             // -hash with optional value: if next arg looks like a flag, use default SHA1
@@ -976,10 +987,18 @@ static int cmd_create(const Args& args)
 static int cmd_create_typed(const Args& args, const char* type_hint)
 {
     // Force a specific archive path: createcd, createdvd, createraw, createhd
-    if (args.input.empty() || args.output.empty())
+    if (args.input.empty())
     {
-        std::fprintf(stderr, "Error: both -i <input> and -o <output> are required for %s\n", type_hint);
+        std::fprintf(stderr, "Error: -i <input> is required for %s\n", type_hint);
         return 1;
+    }
+
+    // Default output: same directory/stem as input + .chd
+    std::string output = args.output;
+    if (output.empty())
+    {
+        fs::path p(args.input);
+        output = (p.parent_path() / p.stem()).string() + ".chd";
     }
 
     ArchiveOptions opts;
@@ -989,6 +1008,10 @@ static int cmd_create_typed(const Args& args, const char* type_hint)
     opts.num_processors = args.num_processors;
     opts.detect_title = true;
     opts.best = args.best;
+
+    // Warn when createraw/createhd is used without -us
+    if (std::string(type_hint) == "raw" && args.unit_size == 0)
+        std::printf("Note: -us (unit size) not specified, defaulting to 512 bytes\n");
 
     if (!args.compression.empty())
     {
@@ -1018,7 +1041,7 @@ static int cmd_create_typed(const Args& args, const char* type_hint)
 
     opts.progress_callback = make_progress("Compressing");
 
-    std::printf("Output CHD:   %s\n", args.output.c_str());
+    std::printf("Output CHD:   %s\n", output.c_str());
     std::printf("Input file:   %s\n", args.input.c_str());
     if (!args.input_parent.empty())
         std::printf("Parent CHD:   %s\n", args.input_parent.c_str());
@@ -1035,9 +1058,9 @@ static int cmd_create_typed(const Args& args, const char* type_hint)
     ArchiveResult result;
 
     std::string th = type_hint;
-    if (th == "cd")        result = archiver.archive_cd(args.input, args.output, opts);
-    else if (th == "dvd")  result = archiver.archive_dvd(args.input, args.output, opts);
-    else                   result = archiver.archive_raw(args.input, args.output, opts);
+    if (th == "cd")        result = archiver.archive_cd(args.input, output, opts);
+    else if (th == "dvd")  result = archiver.archive_dvd(args.input, output, opts);
+    else                   result = archiver.archive_raw(args.input, output, opts);
 
     if (!result.success)
     {
@@ -1058,9 +1081,9 @@ static int cmd_create_typed(const Args& args, const char* type_hint)
 static int cmd_extract_typed(const Args& args, const char* type_hint)
 {
     // extractcd, extractdvd, extractraw, extracthd
-    if (args.input.empty() || args.output.empty())
+    if (args.input.empty())
     {
-        std::fprintf(stderr, "Error: both -i <input> and -o <output> are required for extract%s\n", type_hint);
+        std::fprintf(stderr, "Error: -i <input> is required for extract%s\n", type_hint);
         return 1;
     }
 
@@ -1079,19 +1102,39 @@ static int cmd_extract_typed(const Args& args, const char* type_hint)
     if (args.cue_style >= 0 && args.cue_style <= 2)
         opts.cue_style = parse_cue_style(args.cue_style);
 
-    fs::path out(args.output);
-    opts.output_dir = out.parent_path().string();
-    opts.output_filename = out.filename().string();
-
     std::string th = type_hint;
     if (th == "raw" || th == "hd") opts.force_raw = true;
+
+    // Determine output path — default: same dir as input, extension from type_hint
+    std::string output_display;
+    if (!args.output.empty())
+    {
+        fs::path out(args.output);
+        opts.output_dir = out.parent_path().string();
+        opts.output_filename = out.filename().string();
+        output_display = args.output;
+    }
+    else
+    {
+        fs::path inp(args.input);
+        opts.output_dir = inp.parent_path().string();
+        // For CD: leave filename empty so extractor auto-picks .cue/.gdi
+        // For DVD: stem + .iso, for raw/hd: stem + .bin
+        if (th == "dvd")
+            opts.output_filename = inp.stem().string() + ".iso";
+        else if (th == "raw" || th == "hd")
+            opts.output_filename = inp.stem().string() + ".bin";
+        // th == "cd": leave output_filename empty → extractor auto-generates .cue or .gdi
+        output_display = (fs::path(opts.output_dir) / (opts.output_filename.empty()
+            ? inp.stem().string() + ".*" : opts.output_filename)).string();
+    }
 
     opts.progress_callback = make_progress("Extracting");
 
     std::printf("Input CHD:    %s\n", args.input.c_str());
     if (!args.input_parent.empty())
         std::printf("Parent CHD:   %s\n", args.input_parent.c_str());
-    std::printf("Output file:  %s\n", args.output.c_str());
+    std::printf("Output file:  %s\n", output_display.c_str());
     if (opts.input_start_byte || opts.input_start_hunk)
         std::printf("Input start:  %s\n",
             opts.input_start_byte ? big_int_string(opts.input_start_byte).c_str()
@@ -1118,6 +1161,223 @@ static int cmd_extract_typed(const Args& args, const char* type_hint)
     std::printf("Extraction complete\n");
 
     log_info(std::string("extract") + type_hint + " OK: " + std::to_string(result.bytes_written) + " bytes");
+    return 0;
+}
+
+// ======================> verify command
+
+static int cmd_verify(const Args& args)
+{
+    if (args.input.empty())
+    {
+        std::fprintf(stderr, "Error: no input file specified\n");
+        return 1;
+    }
+
+    ChdReader reader;
+    try {
+        reader.open(args.input);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "Error opening CHD: %s\n", e.what());
+        log_error(std::string("verify: ") + e.what());
+        return 1;
+    }
+
+    std::printf("Verifying:    %s\n", args.input.c_str());
+
+    auto progress = make_progress("Verifying");
+
+    VerifyResult vr;
+    if (args.fix)
+        vr = reader.verify_fix(progress);
+    else
+        vr = reader.verify(progress);
+
+    if (!vr.success)
+    {
+        std::fprintf(stderr, "\nError: %s\n", vr.error_message.c_str());
+        log_error("verify: " + vr.error_message);
+        return 1;
+    }
+
+    std::printf("Raw SHA1:     %s %s\n", vr.computed_raw_sha1.c_str(),
+                vr.raw_sha1_match ? "(verified)" : "(MISMATCH)");
+    std::printf("Overall SHA1: %s %s\n", vr.computed_overall_sha1.c_str(),
+                vr.overall_sha1_match ? "(verified)" : "(MISMATCH)");
+
+    if (!vr.raw_sha1_match || !vr.overall_sha1_match)
+    {
+        std::printf("Header raw:   %s\n", vr.header_raw_sha1.c_str());
+        std::printf("Header SHA1:  %s\n", vr.header_overall_sha1.c_str());
+
+        if (args.fix)
+            std::printf("SHA1 updated in header.\n");
+        else
+            std::printf("Use --fix to update the header SHA1.\n");
+
+        log_info("verify: SHA1 mismatch" + std::string(args.fix ? " (fixed)" : ""));
+        return args.fix ? 0 : 1;
+    }
+
+    std::printf("Verification complete — integrity OK\n");
+    log_info("verify OK");
+    return 0;
+}
+
+// ======================> copy command (re-compress CHD)
+
+static int cmd_copy(const Args& args)
+{
+    if (args.input.empty())
+    {
+        std::fprintf(stderr, "Error: -i <input> is required for copy\n");
+        return 1;
+    }
+
+    // Default output: stem_copy.chd
+    std::string output = args.output;
+    if (output.empty())
+    {
+        fs::path p(args.input);
+        output = (p.parent_path() / (p.stem().string() + "_copy")).string() + ".chd";
+    }
+
+    if (fs::exists(output))
+    {
+        std::error_code ec;
+        if (fs::equivalent(fs::path(args.input), fs::path(output), ec))
+        {
+            std::fprintf(stderr, "Error: input and output cannot be the same file\n");
+            return 1;
+        }
+    }
+
+    ArchiveOptions opts;
+    opts.parent_chd_path = args.output_parent.empty() ? args.input_parent : args.output_parent;
+    opts.hunk_bytes = args.hunk_size;
+    opts.unit_bytes = args.unit_size;
+    opts.num_processors = args.num_processors;
+    opts.best = args.best;
+
+    if (!args.compression.empty())
+    {
+        if (args.compression == "none")
+        {
+            std::fprintf(stderr, "Error: uncompressed CHD (-c none) is not yet supported\n");
+            return 1;
+        }
+        std::string s = args.compression;
+        int slot = 0;
+        size_t pos = 0;
+        while (pos < s.size() && slot < 4)
+        {
+            auto comma = s.find(',', pos);
+            std::string tok = (comma == std::string::npos)
+                ? s.substr(pos) : s.substr(pos, comma - pos);
+            while (!tok.empty() && tok.front() == ' ') tok.erase(tok.begin());
+            while (!tok.empty() && tok.back() == ' ') tok.pop_back();
+            for (auto& c : tok) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            opts.compression[slot++] = parse_codec(tok);
+            pos = (comma == std::string::npos) ? s.size() : comma + 1;
+        }
+    }
+
+    opts.progress_callback = make_progress("Compressing");
+
+    std::printf("Input CHD:    %s\n", args.input.c_str());
+    std::printf("Output CHD:   %s\n", output.c_str());
+    if (opts.has_custom_compression())
+        std::printf("Compression:  %s\n", codec_list_string(opts.compression).c_str());
+    if (opts.hunk_bytes)
+        std::printf("Hunk size:    %s bytes\n", big_int_string(opts.hunk_bytes).c_str());
+
+    if (args.num_processors > 0)
+        osd_num_processors = args.num_processors;
+
+    ChdArchiver archiver;
+    auto result = archiver.copy(args.input, output, opts);
+
+    if (!result.success)
+    {
+        std::fprintf(stderr, "\nError: %s\n", result.error_message.c_str());
+        log_error("copy: " + result.error_message);
+        return 1;
+    }
+
+    std::printf("Input size:   %s bytes\n", big_int_string(result.input_bytes).c_str());
+    std::printf("Output size:  %s bytes\n", big_int_string(result.output_bytes).c_str());
+    std::printf("Ratio:        %.1f%%\n", result.compression_ratio * 100.0);
+    std::printf("Copy complete\n");
+
+    log_info("copy OK: " + std::to_string(result.output_bytes) + " bytes");
+    return 0;
+}
+
+// ======================> dumpmeta command
+
+static uint32_t parse_meta_tag(const std::string& s)
+{
+    if (s.size() != 4)
+    {
+        std::fprintf(stderr, "Error: metadata tag must be exactly 4 characters (e.g. CHTR, DVD )\n");
+        return 0;
+    }
+    return (uint32_t(uint8_t(s[0])) << 24) | (uint32_t(uint8_t(s[1])) << 16)
+         | (uint32_t(uint8_t(s[2])) << 8)  | uint32_t(uint8_t(s[3]));
+}
+
+static int cmd_dumpmeta(const Args& args)
+{
+    if (args.input.empty())
+    {
+        std::fprintf(stderr, "Error: -i <input> is required for dumpmeta\n");
+        return 1;
+    }
+    if (args.meta_tag.empty())
+    {
+        std::fprintf(stderr, "Error: -t <tag> is required for dumpmeta (e.g. -t CHTR)\n");
+        return 1;
+    }
+
+    uint32_t tag = parse_meta_tag(args.meta_tag);
+    if (tag == 0)
+        return 1;
+
+    ChdReader reader;
+    try {
+        reader.open(args.input);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "Error opening CHD: %s\n", e.what());
+        log_error(std::string("dumpmeta: ") + e.what());
+        return 1;
+    }
+
+    std::string data = reader.read_metadata(tag, args.meta_index);
+    if (data.empty())
+    {
+        std::fprintf(stderr, "No metadata found for tag '%s' index %d\n",
+                     args.meta_tag.c_str(), args.meta_index);
+        return 1;
+    }
+
+    // If -o specified, write to file; otherwise print to stdout
+    if (!args.output.empty())
+    {
+        std::ofstream out(args.output, std::ios::binary);
+        if (!out)
+        {
+            std::fprintf(stderr, "Error: cannot write to '%s'\n", args.output.c_str());
+            return 1;
+        }
+        out.write(data.data(), static_cast<std::streamsize>(data.size()));
+        std::printf("Wrote %zu bytes to %s\n", data.size(), args.output.c_str());
+    }
+    else
+    {
+        std::printf("%s\n", data.c_str());
+    }
+
+    log_info("dumpmeta OK: tag=" + args.meta_tag + " index=" + std::to_string(args.meta_index));
     return 0;
 }
 
@@ -1406,6 +1666,9 @@ int main(int argc, char** argv)
         if (cmd == "extractraw")                  return cmd_extract_typed(args, "raw");
         if (cmd == "extracthd")                   return cmd_extract_typed(args, "hd");
         if (cmd == "convertcue")                   return cmd_convertcue(args);
+        if (cmd == "verify")                       return cmd_verify(args);
+        if (cmd == "copy")                         return cmd_copy(args);
+        if (cmd == "dumpmeta")                     return cmd_dumpmeta(args);
 
         // Check if first arg is a file or directory (drag-and-drop / bare input)
         if (fs::exists(args.command))

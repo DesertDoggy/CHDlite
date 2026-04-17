@@ -112,5 +112,27 @@
   - [x] Add `--best` preset: CD = `cdzs, cdlz, cdzl, cdfl` / DVD = `zstd, lzma, zlib`
   - [ ] ~~Support `-c none`~~ — deliberately unsupported (speedpatch issues with uncompressed CHD)
 
+## chdman Command Defaults
+- [x] **Default `-o` for create\* commands** — auto-generate `stem.chd` from input path
+- [x] **Default `-o` for extract\* commands** — auto-generate from metadata tag:
+  - CHTR/CHT2/CHCD → `.cue`, CHGD/CHGT → `.gdi`, DVD → `.iso`, GDDD → `.bin`
+  - CD: leave to extractor (auto-picks `.cue` or `.gdi` from tags)
+- [ ] **`createraw` `-us` warning** — warn + default to 512 when omitted (safe for speedpatch)
+- [ ] **`createhd`** — keep as alias for createraw (no CHS/template/blank disk support)
+
+## Missing chdman-compatible Commands
+- [ ] **`verify`** — read all data, recompute SHA1, compare with header; `--fix` updates header
+  - Currently listed in help but not dispatched (bug)
+- [ ] **`copy`** — re-compress CHD→CHD with different codecs/hunk_size
+  - Supports `-c`, `-hs`, `--best`, `-np`, `-ip`/`-op`
+- [ ] **`dumpmeta`** — raw metadata dump by 4-char tag + index
+  - Also add raw metadata to `read -v` (verbose mode)
+  - `read` = dumpmeta (formatted) + autodetect extras (platform, title, manufacturer)
+
+### Deferred / Out of Scope
+- [ ] **`listtemplates`** — 13 pre-defined HD geometries for MAME arcade hardware (niche, skip for now)
+- [ ] **`createld` / `extractld`** — LaserDisc (AVI), extremely niche
+- [ ] **`addmeta` / `delmeta`** — metadata write ops (special-purpose)
+
 # When using chdman commands need -i -o, and depending on command some other options also.
 -> make auto if not specified. (except -i ofcourse)

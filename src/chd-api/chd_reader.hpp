@@ -68,6 +68,12 @@ public:
     // Metadata access
     std::string read_metadata(uint32_t tag, uint32_t index = 0) const;
 
+    // Verify CHD integrity: recompute data SHA1 and compare with header
+    VerifyResult verify(std::function<bool(uint64_t, uint64_t)> progress = nullptr) const;
+
+    // Verify and fix: if SHA1 mismatch, update the header with the computed SHA1
+    VerifyResult verify_fix(std::function<bool(uint64_t, uint64_t)> progress = nullptr);
+
     // Static utility
     static bool is_chd_file(const std::string& path);
 

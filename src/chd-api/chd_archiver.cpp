@@ -833,4 +833,126 @@ ArchiveResult ChdArchiver::archive(const std::string& input_path,
     return result;
 }
 
+
+// ======================> CHD-to-CHD compressor (reads from an existing chd_file)
+
+class chdfile_compressor : public chd_file_compressor
+{
+public:
+    chdfile_compressor(chd_file& source, uint64_t maxoffset)
+        : m_source(source), m_maxoffset(maxoffset)
+    {
+    }
+
+    uint32_t read_data(void* dest, uint64_t offset, uint32_t length) override
+    {
+        if (offset >= m_maxoffset)
+            return 0;
+        if (offset + length > m_maxoffset)
+            length = static_cast<uint32_t>(m_maxoffset - offset);
+        auto err = m_source.read_bytes(offset, dest, length);
+        if (err)
+            return 0;
+        return length;
+    }
+
+private:
+    chd_file& m_source;
+    uint64_t m_maxoffset;
+};
+
+
+// ======================> copy (re-compress CHD→CHD)
+
+ArchiveResult ChdArchiver::copy(const std::string& input_path,
+                                const std::string& output_path,
+                                const ArchiveOptions& options)
+{
+    ArchiveResult result{};
+    result.output_path = output_path;
+
+    try
+    {
+        // Open input CHD
+        chd_file input_chd;
+        auto err = input_chd.open(input_path);
+        if (err)
+            throw ChdInputException("Cannot open input CHD '" + input_path + "': " + err.message());
+
+        uint64_t logical_bytes = input_chd.logical_bytes();
+        uint32_t src_hunk_bytes = input_chd.hunk_bytes();
+        uint32_t src_unit_bytes = input_chd.unit_bytes();
+        result.input_bytes = logical_bytes;
+
+        // Determine output parameters
+        uint32_t hunk_bytes = options.hunk_bytes > 0 ? options.hunk_bytes : src_hunk_bytes;
+        uint32_t unit_bytes = options.unit_bytes > 0 ? options.unit_bytes : src_unit_bytes;
+
+        // Ensure hunk_size is a multiple of unit_size
+        if (hunk_bytes % unit_bytes != 0)
+            hunk_bytes = ((hunk_bytes / unit_bytes) + 1) * unit_bytes;
+
+        // Detect content type for smart codec defaults
+        ContentType ct = ContentType::Raw;
+        if (!input_chd.check_is_gd())      ct = ContentType::GDROM;
+        else if (!input_chd.check_is_cd())  ct = ContentType::CDROM;
+        else if (!input_chd.check_is_dvd()) ct = ContentType::DVD;
+        else if (!input_chd.check_is_hd())  ct = ContentType::HardDisk;
+
+        bool is_cd_type = (ct == ContentType::CDROM || ct == ContentType::GDROM);
+
+        // Resolve compression codecs
+        chd_codec_type compression[4];
+        const chd_codec_type* defaults = is_cd_type
+            ? (options.best ? s_best_cd_compression : s_default_cd_compression)
+            : (options.best ? s_best_dvd_compression : s_default_raw_compression);
+        Impl::resolve_compression(options, defaults, compression);
+
+        // Handle parent CHD for output
+        chd_file output_parent;
+        if (!options.parent_chd_path.empty())
+        {
+            auto perr = output_parent.open(options.parent_chd_path);
+            if (perr)
+                throw ChdParentException("Cannot open output parent CHD '" + options.parent_chd_path + "': " + perr.message());
+        }
+
+        // Create compressor
+        auto chd = std::make_unique<chdfile_compressor>(input_chd, logical_bytes);
+
+        std::error_condition cerr;
+        if (output_parent.opened())
+            cerr = chd->create(output_path, logical_bytes, hunk_bytes, compression, output_parent);
+        else
+            cerr = chd->create(output_path, logical_bytes, hunk_bytes, unit_bytes, compression);
+        if (cerr)
+            throw ChdOutputException("Cannot create output CHD '" + output_path + "': " + cerr.message());
+
+        // Clone all metadata from input
+        chd->clone_all_metadata(input_chd);
+
+        // Compress
+        Impl::compress_with_progress(*chd, options, logical_bytes, result);
+
+        // Get output file size
+        std::ifstream outf(output_path, std::ios::binary | std::ios::ate);
+        if (outf.is_open())
+            result.output_bytes = static_cast<uint64_t>(outf.tellg());
+
+        result.success = true;
+    }
+    catch (const ChdException& e)
+    {
+        if (options.log_callback) options.log_callback(e.severity(), e.what());
+        throw;
+    }
+    catch (const std::exception& e)
+    {
+        if (options.log_callback) options.log_callback(LogLevel::Error, e.what());
+        throw;
+    }
+
+    return result;
+}
+
 } // namespace chdlite

@@ -725,6 +725,114 @@ std::string ChdReader::read_metadata(uint32_t tag, uint32_t index) const
     return output;
 }
 
+VerifyResult ChdReader::verify(std::function<bool(uint64_t, uint64_t)> progress) const
+{
+    if (!m_impl->chd.opened())
+        throw ChdException("CHD file not open");
+
+    VerifyResult vr;
+    chd_file& chd = m_impl->chd;
+
+    // Read header SHA1 values
+    auto hdr_raw = chd.raw_sha1();
+    auto hdr_sha1 = chd.sha1();
+    vr.header_raw_sha1 = (hdr_raw != util::sha1_t::null) ? hdr_raw.as_string() : std::string();
+    vr.header_overall_sha1 = (hdr_sha1 != util::sha1_t::null) ? hdr_sha1.as_string() : std::string();
+
+    // Recompute raw SHA1 by reading every hunk
+    uint32_t hunk_count = chd.hunk_count();
+    uint32_t hunk_bytes = chd.hunk_bytes();
+    uint64_t logical_bytes = chd.logical_bytes();
+
+    util::sha1_creator creator;
+    std::vector<uint8_t> buffer(hunk_bytes);
+
+    for (uint32_t h = 0; h < hunk_count; h++)
+    {
+        auto err = chd.read_hunk(h, buffer.data());
+        if (err)
+        {
+            vr.error_message = "Error reading hunk " + std::to_string(h) + ": " + err.message();
+            return vr;
+        }
+
+        // Last hunk may be partial
+        uint64_t offset = static_cast<uint64_t>(h) * hunk_bytes;
+        uint32_t valid = (offset + hunk_bytes <= logical_bytes) ? hunk_bytes
+            : static_cast<uint32_t>(logical_bytes - offset);
+        creator.append(buffer.data(), valid);
+
+        if (progress)
+        {
+            uint64_t done = std::min(offset + hunk_bytes, logical_bytes);
+            if (!progress(done, logical_bytes))
+            {
+                vr.error_message = "Verification cancelled";
+                return vr;
+            }
+        }
+    }
+
+    auto computed_raw = creator.finish();
+    vr.computed_raw_sha1 = computed_raw.as_string();
+    vr.raw_sha1_match = (computed_raw == hdr_raw);
+
+    // Compute overall SHA1 (includes metadata)
+    auto computed_overall = chd.compute_overall_sha1(computed_raw);
+    vr.computed_overall_sha1 = computed_overall.as_string();
+    vr.overall_sha1_match = (computed_overall == hdr_sha1);
+
+    vr.success = true;
+    return vr;
+}
+
+VerifyResult ChdReader::verify_fix(std::function<bool(uint64_t, uint64_t)> progress)
+{
+    // First verify
+    VerifyResult vr = verify(std::move(progress));
+    if (!vr.success || (vr.raw_sha1_match && vr.overall_sha1_match))
+        return vr;
+
+    // Reopen writeable to fix
+    std::string path = m_impl->filepath;
+    m_impl->chd.close();
+
+    auto err = m_impl->chd.open(path, true);
+    if (err)
+    {
+        vr.error_message = "Cannot reopen CHD for writing: " + err.message();
+        vr.success = false;
+        // Try to reopen read-only
+        m_impl->chd.open(path, false);
+        return vr;
+    }
+
+    // Write the correct raw SHA1 — compute_overall_sha1 is derived from it
+    util::sha1_t raw;
+    raw.from_string(vr.computed_raw_sha1);
+    err = m_impl->chd.set_raw_sha1(raw);
+    if (err)
+    {
+        vr.error_message = "Failed to write corrected SHA1: " + err.message();
+        vr.success = false;
+    }
+    else
+    {
+        // Re-read the now-updated values
+        auto new_sha1 = m_impl->chd.sha1();
+        vr.header_raw_sha1 = vr.computed_raw_sha1;
+        vr.header_overall_sha1 = new_sha1.as_string();
+        vr.raw_sha1_match = true;
+        vr.overall_sha1_match = (new_sha1.as_string() == vr.computed_overall_sha1);
+    }
+
+    // Reopen read-only
+    m_impl->chd.close();
+    m_impl->chd.open(path, false);
+
+    return vr;
+}
+
 bool ChdReader::is_chd_file(const std::string& path)
 {
     std::ifstream f(path, std::ios::binary);

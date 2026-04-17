@@ -32,6 +32,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -46,19 +47,22 @@ extern int osd_num_processors;
 namespace fs = std::filesystem;
 using namespace chdlite;
 
-// ======================> Activity log
-// Appends to chdlite.log next to the binary or cwd.
+// ======================> Activity log + Pretty log
+// Appends to chdlite.log (machine-parseable single-line, pipe-delimited).
+// Optionally appends to chdlite-pretty.log (human-readable multi-line indented).
 // Records: timestamp, version, full command line, status (OK or error).
-// Default level per release phase:  alpha=info  beta=error  release=none
-// Override with -log debug|info|warning|error|critical|none
+// Log level control via --log <level>: info, error, none, debug, warning, critical
+// Override with --log <level> for structured log detail
 // LogLevel is defined in chdlite::chd_types.hpp and shared with the library.
 
-static constexpr LogLevel LOG_DEFAULT = LogLevel::Info;  // ← change per phase
+static constexpr LogLevel LOG_LEVEL_DEFAULT = LogLevel::Info;
 
-static LogLevel      g_log_level = LOG_DEFAULT;
+static LogLevel      g_log_level = LOG_LEVEL_DEFAULT;
+static bool          g_pretty_log_enabled = false;
 static std::string   g_cmdline;
 static std::string   g_input_file;
-static std::shared_ptr<spdlog::logger> g_logger;
+static std::shared_ptr<spdlog::logger> g_logger;          // structured log (chdlite.log)
+static std::shared_ptr<spdlog::logger> g_pretty_logger;   // pretty log (chdlite-pretty.log)
 static fs::path g_logs_dir;  // set by init_log / --log-dir, used for hash output default
 
 static void init_log(int argc, char** argv)
@@ -74,18 +78,69 @@ static void init_log(int argc, char** argv)
             g_cmdline += a;
     }
 
-    // Resolve <exe_root>/logs/chdlite.log
+    // Resolve <exe_root>/logs/
     std::error_code ec;
     fs::path exe_dir = fs::canonical(fs::path(argv[0]).parent_path(), ec);
     g_logs_dir = (ec || exe_dir.empty()) ? fs::path("logs") : exe_dir / "logs";
     fs::create_directories(g_logs_dir, ec);
-    std::string log_path = (g_logs_dir / "chdlite.log").string();
-
-    auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_path, false /*truncate=false, i.e. append*/);
+    
+    // Initialize structured log (chdlite.log)
+    std::string structured_log_path = (g_logs_dir / "chdlite.log").string();
+    auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(structured_log_path, false /*truncate=false, i.e. append*/);
     g_logger = std::make_shared<spdlog::logger>("chdlite", file_sink);
     g_logger->set_pattern("[%Y-%m-%d %H:%M:%S] [%l] %v");
     g_logger->set_level(spdlog::level::trace);  // gate via g_log_level below
     g_logger->flush_on(spdlog::level::debug);
+    
+    // Initialize pretty log (chdlite-pretty.log) — will be lazily created on first use
+}
+
+// Parse log level string → LogLevel enum
+static LogLevel parse_log_level(const std::string& s)
+{
+    std::string lower = s;
+    for (auto& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (lower == "debug") return LogLevel::Debug;
+    if (lower == "info") return LogLevel::Info;
+    if (lower == "warning" || lower == "warn") return LogLevel::Warning;
+    if (lower == "error") return LogLevel::Error;
+    if (lower == "critical") return LogLevel::Critical;
+    if (lower == "none" || lower == "off") return LogLevel::None;
+    return LogLevel::Info;  // default to info
+}
+
+// Ensure pretty logger is initialized
+static void ensure_pretty_logger()
+{
+    if (g_pretty_logger) return;
+    
+    std::string pretty_log_path = (g_logs_dir / "chdlite-pretty.log").string();
+    auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(pretty_log_path, false);
+    g_pretty_logger = std::make_shared<spdlog::logger>("chdlite-pretty", file_sink);
+    g_pretty_logger->set_pattern("%v");  // no timestamp prefix for pretty log
+    g_pretty_logger->set_level(spdlog::level::trace);
+    g_pretty_logger->flush_on(spdlog::level::debug);
+}
+
+// Write multi-line pretty log entry with indentation
+static void log_pretty(const std::string& prefix, const std::map<std::string, std::string>& fields)
+{
+    if (!g_pretty_log_enabled) return;
+    
+    ensure_pretty_logger();
+    
+    // Timestamp
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    char ts[64];
+    std::strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", std::localtime(&time_t_now));
+    
+    g_pretty_logger->info(std::string(ts) + " " + prefix);
+    for (const auto& [key, val] : fields)
+    {
+        g_pretty_logger->info("  " + key + ": " + val);
+    }
+    g_pretty_logger->info("");  // blank line separator
 }
 
 // Map chdlite::LogLevel → spdlog level and forward if at/above threshold.
@@ -317,6 +372,7 @@ struct Args
     bool        fix = false;              // --fix → verify: fix SHA1 mismatch by updating header
     std::string meta_tag;                 // -t → dumpmeta: 4-char metadata tag (e.g. "CHTR")
     int         meta_index = 0;           // -ix → dumpmeta: metadata index (default: 0)
+    std::string result_format;            // --result text|json|lot|svg etc; controls pretty log (on by default for read/hash)
 };
 
 static void print_usage()
@@ -367,8 +423,11 @@ static void print_usage()
         "                              Default: sha1. Comma-separated for multiple.\n"
         "  --hash-dir <path>           Directory for .hashes output file\n"
         "                              Default: <exe>/logs/  Special: \"disc\" = next to input\n"
-        "  -log <level>                Log level: info, error, none (default: info)\n"
+        "  -log <level>                Structured log level: debug, info, warning, error, critical, none\n"
+        "                              (default: info)\n"
         "  --log-dir <path>            Directory for chdlite.log  (default: <exe>/logs/)\n"
+        "  --result <format>           Pretty log output: on|off (read/hash default: on; extract/create default: off)\n"
+        "                              Formats: text, json, lot, svg, etc. (for hash output)\n"
         "  --best                      Maximum compression (zstd+lzma+zlib / flac)\n"
         "  --fix                       Verify: fix SHA1 mismatch by updating header\n"
         "  -t, --tag <tag>             Dumpmeta: 4-char metadata tag (e.g. CHTR, DVD )\n"
@@ -462,6 +521,7 @@ static Args parse_args(int argc, char** argv)
         else if (arg == "-log" || arg == "--log")       a.log_level = next();
         else if (arg == "--log-dir")                    a.log_dir = next();
         else if (arg == "--hash-dir")                   a.hash_dir = next();
+        else if (arg == "--result")                     a.result_format = next();
         else if (arg == "-style" || arg == "--style" || arg == "--cue-style") a.cue_style = std::stoi(next());
         else if (arg == "--best")                       a.best = true;
         else if (arg == "--fix")                        a.fix = true;
@@ -587,7 +647,7 @@ static int cmd_read(const Args& args)
         log_debug("detect: format-source=" + std::string(format_source_name(det.format_source))
             + " platform=" + game_platform_name(det.game_platform)
             + " platform-source=" + platform_source_name(det.platform_source));
-        log_info("read OK");
+        log_info("read OK: i=" + args.input);
         return 0;
     }
 
@@ -598,7 +658,7 @@ static int cmd_read(const Args& args)
     } catch (const std::exception& e) {
         std::string err = std::string("opening CHD: ") + e.what();
         std::fprintf(stderr, "Error %s\n", err.c_str());
-        log_error(err);
+        log_error("read: i=" + args.input + " " + err);
         return 1;
     }
 
@@ -668,6 +728,7 @@ static int cmd_read(const Args& args)
         };
 
         bool has_meta = false;
+        std::string meta_log;
         for (auto& td : tags)
         {
             for (int ix = 0; ix < 100; ix++)
@@ -676,11 +737,68 @@ static int cmd_read(const Args& args)
                 if (data.empty()) break;
                 if (!has_meta) { std::printf("Metadata:\n"); has_meta = true; }
                 std::printf("  %s[%d]: %s\n", td.name, ix, data.c_str());
+                if (!meta_log.empty()) meta_log += " | ";
+                meta_log += std::string(td.name) + "[" + std::to_string(ix) + "]=" + data;
             }
         }
+        if (!meta_log.empty())
+            log_debug("metadata: " + meta_log);
     }
 
-    log_info("read OK");
+    // Log all read data
+    {
+        std::string log;
+        log += "type=" + std::string(content_type_name(hdr.content_type));
+        log += " version=" + std::to_string(hdr.version);
+        log += " size=" + std::to_string(hdr.logical_bytes);
+        log += " hunk=" + std::to_string(hdr.hunk_bytes);
+        log += " unit=" + std::to_string(hdr.unit_bytes);
+        log += " compression=" + codec_list_string(hdr.codecs);
+        if (!hdr.sha1.empty())
+            log += " sha1=" + hdr.sha1;
+        if (!hdr.raw_sha1.empty())
+            log += " raw_sha1=" + hdr.raw_sha1;
+        if (hdr.content_type == ContentType::CDROM || hdr.content_type == ContentType::GDROM)
+            log += " tracks=" + std::to_string(hdr.tracks.size());
+        if (det.game_platform != GamePlatform::Unknown)
+        {
+            log += " platform=" + std::string(game_platform_name(det.game_platform));
+            if (!det.title.empty())
+                log += " title=" + det.title;
+            if (!det.manufacturer_id.empty())
+                log += " id=" + det.manufacturer_id;
+        }
+        log += " i=" + args.input;
+        log_info("read OK: " + log);
+        
+        // Write pretty log if enabled
+        if (g_pretty_log_enabled)
+        {
+            std::map<std::string, std::string> fields;
+            fields["type"] = content_type_name(hdr.content_type);
+            fields["version"] = std::to_string(hdr.version);
+            fields["size"] = big_int_string(hdr.logical_bytes) + " bytes";
+            fields["hunk_size"] = std::to_string(hdr.hunk_bytes) + " bytes";
+            fields["unit_size"] = std::to_string(hdr.unit_bytes) + " bytes";
+            fields["compression"] = codec_list_string(hdr.codecs);
+            if (!hdr.sha1.empty())
+                fields["sha1"] = hdr.sha1;
+            if (!hdr.raw_sha1.empty())
+                fields["raw_sha1"] = hdr.raw_sha1;
+            if (hdr.content_type == ContentType::CDROM || hdr.content_type == ContentType::GDROM)
+                fields["tracks"] = std::to_string(hdr.tracks.size());
+            if (det.game_platform != GamePlatform::Unknown)
+            {
+                fields["platform"] = game_platform_name(det.game_platform);
+                if (!det.title.empty())
+                    fields["title"] = det.title;
+                if (!det.manufacturer_id.empty())
+                    fields["manufacturer_id"] = det.manufacturer_id;
+            }
+            fields["input"] = args.input;
+            log_pretty("read", fields);
+        }
+    }
     return 0;
 }
 
@@ -787,14 +905,21 @@ static int cmd_hash(const Args& args)
     std::printf("Hashing content...\n");
 
     auto t0 = std::chrono::steady_clock::now();
-    auto result = reader.hash_content(flags);
+    ContentHashResult result;
+    try {
+        result = reader.hash_content(flags);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "Error: %s\n", e.what());
+        log_error("hash: i=" + args.input + " " + e.what());
+        return 1;
+    }
     auto t1 = std::chrono::steady_clock::now();
     double secs = std::chrono::duration<double>(t1 - t0).count();
 
     if (!result.success)
     {
         std::fprintf(stderr, "Error: %s\n", result.error_message.c_str());
-        log_error("hash: " + result.error_message);
+        log_error("hash: i=" + args.input + " " + result.error_message);
         return 1;
     }
 
@@ -841,7 +966,29 @@ static int cmd_hash(const Args& args)
     // Write .hashes file (default: <exe>/logs/, override with --hash-dir)
     write_hashes_file(result, args.input, args.hash_dir, flags);
 
-    log_info("hash OK: " + std::to_string(result.tracks.size()) + " tracks");
+    log_info("hash OK: i=" + args.input + " tracks=" + std::to_string(result.tracks.size()));
+    
+    // Write pretty log if enabled
+    if (g_pretty_log_enabled)
+    {
+        std::map<std::string, std::string> fields;
+        fields["input"] = args.input;
+        fields["tracks"] = std::to_string(result.tracks.size());
+        
+        // Count track hashes
+        int hash_count = 0;
+        for (const auto& t : result.tracks)
+        {
+            if (!t.sha1.hex_string.empty()) hash_count++;
+        }
+        fields["hashed_tracks"] = std::to_string(hash_count);
+        
+        // Sheet hash info
+        if (!result.sheet_content.empty())
+            fields["sheet"] = std::to_string(result.sheet_content.size()) + " bytes";
+        
+        log_pretty("hash", fields);
+    }
     return 0;
 }
 
@@ -897,12 +1044,19 @@ static int cmd_extract(const Args& args)
     std::printf("Input CHD:    %s\n", args.input.c_str());
 
     ChdExtractor extractor;
-    auto result = extractor.extract(args.input, opts);
+    ExtractionResult result;
+    try {
+        result = extractor.extract(args.input, opts);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "\nError: %s\n", e.what());
+        log_error("extract: i=" + args.input + " " + e.what());
+        return 1;
+    }
 
     if (!result.success)
     {
         std::fprintf(stderr, "\nError: %s\n", result.error_message.c_str());
-        log_error("extract: " + result.error_message);
+        log_error("extract: i=" + args.input + " " + result.error_message);
         return 1;
     }
 
@@ -913,7 +1067,20 @@ static int cmd_extract(const Args& args)
     std::printf("Bytes:        %s\n", big_int_string(result.bytes_written).c_str());
     std::printf("Extraction complete\n");
 
-    log_info("extract OK: " + std::to_string(result.bytes_written) + " bytes");
+    log_info("extract OK: i=" + args.input + " o=" + result.output_path + " bytes=" + std::to_string(result.bytes_written));
+    
+    // Write pretty log if enabled
+    if (g_pretty_log_enabled)
+    {
+        std::map<std::string, std::string> fields;
+        fields["input"] = args.input;
+        fields["output"] = result.output_path;
+        fields["bytes"] = big_int_string(result.bytes_written);
+        fields["content_type"] = content_type_name(result.detected_type);
+        for (size_t i = 0; i < result.output_files.size(); i++)
+            fields["file_" + std::to_string(i+1)] = result.output_files[i];
+        log_pretty("extract", fields);
+    }
     return 0;
 }
 
@@ -994,12 +1161,19 @@ static int cmd_create(const Args& args)
         osd_num_processors = args.num_processors;
 
     ChdArchiver archiver;
-    auto result = archiver.archive(args.input, output, opts);
+    ArchiveResult result;
+    try {
+        result = archiver.archive(args.input, output, opts);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "\nError: %s\n", e.what());
+        log_error("create: i=" + args.input + " o=" + output + " " + e.what());
+        return 1;
+    }
 
     if (!result.success)
     {
         std::fprintf(stderr, "\nError: %s\n", result.error_message.c_str());
-        log_error("create: " + result.error_message);
+        log_error("create: i=" + args.input + " o=" + output + " " + result.error_message);
         return 1;
     }
 
@@ -1014,7 +1188,25 @@ static int cmd_create(const Args& args)
         std::printf("Manufacturer ID: %s\n", result.detected_manufacturer_id.c_str());
     std::printf("Compression complete\n");
 
-    log_info("create OK: " + std::to_string(result.output_bytes) + " bytes");
+    log_info("create OK: i=" + args.input + " o=" + output + " bytes=" + std::to_string(result.output_bytes));
+    
+    // Write pretty log if enabled
+    if (g_pretty_log_enabled)
+    {
+        std::map<std::string, std::string> fields;
+        fields["input"] = args.input;
+        fields["output"] = output;
+        fields["input_bytes"] = big_int_string(result.input_bytes);
+        fields["output_bytes"] = big_int_string(result.output_bytes);
+        fields["compression_ratio"] = std::to_string(static_cast<int>(result.compression_ratio * 100.0)) + "%";
+        if (result.detected_game_platform != GamePlatform::Unknown)
+            fields["platform"] = game_platform_name(result.detected_game_platform);
+        if (!result.detected_title.empty())
+            fields["title"] = result.detected_title;
+        if (!result.detected_manufacturer_id.empty())
+            fields["manufacturer_id"] = result.detected_manufacturer_id;
+        log_pretty("create", fields);
+    }
     return 0;
 }
 
@@ -1092,14 +1284,20 @@ static int cmd_create_typed(const Args& args, const char* type_hint)
     ArchiveResult result;
 
     std::string th = type_hint;
-    if (th == "cd")        result = archiver.archive_cd(args.input, output, opts);
-    else if (th == "dvd")  result = archiver.archive_dvd(args.input, output, opts);
-    else                   result = archiver.archive_raw(args.input, output, opts);
+    try {
+        if (th == "cd")        result = archiver.archive_cd(args.input, output, opts);
+        else if (th == "dvd")  result = archiver.archive_dvd(args.input, output, opts);
+        else                   result = archiver.archive_raw(args.input, output, opts);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "\nError: %s\n", e.what());
+        log_error(std::string(type_hint) + ": i=" + args.input + " o=" + output + " " + e.what());
+        return 1;
+    }
 
     if (!result.success)
     {
         std::fprintf(stderr, "\nError: %s\n", result.error_message.c_str());
-        log_error(std::string(type_hint) + ": " + result.error_message);
+        log_error(std::string(type_hint) + ": i=" + args.input + " o=" + output + " " + result.error_message);
         return 1;
     }
 
@@ -1108,7 +1306,19 @@ static int cmd_create_typed(const Args& args, const char* type_hint)
     std::printf("Ratio:        %.1f%%\n", result.compression_ratio * 100.0);
     std::printf("Compression complete\n");
 
-    log_info(std::string(type_hint) + " OK: " + std::to_string(result.output_bytes) + " bytes");
+    log_info(std::string(type_hint) + " OK: i=" + args.input + " o=" + output + " bytes=" + std::to_string(result.output_bytes));
+    
+    // Write pretty log if enabled
+    if (g_pretty_log_enabled)
+    {
+        std::map<std::string, std::string> fields;
+        fields["input"] = args.input;
+        fields["output"] = output;
+        fields["input_bytes"] = big_int_string(result.input_bytes);
+        fields["output_bytes"] = big_int_string(result.output_bytes);
+        fields["compression_ratio"] = std::to_string(static_cast<int>(result.compression_ratio * 100.0)) + "%";
+        log_pretty(type_hint, fields);
+    }
     return 0;
 }
 
@@ -1179,12 +1389,19 @@ static int cmd_extract_typed(const Args& args, const char* type_hint)
                              : (big_int_string(opts.input_hunks) + " hunks").c_str());
 
     ChdExtractor extractor;
-    auto result = extractor.extract(args.input, opts);
+    ExtractionResult result;
+    try {
+        result = extractor.extract(args.input, opts);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "\nError: %s\n", e.what());
+        log_error(std::string("extract") + type_hint + ": i=" + args.input + " " + e.what());
+        return 1;
+    }
 
     if (!result.success)
     {
         std::fprintf(stderr, "\nError: %s\n", result.error_message.c_str());
-        log_error(std::string("extract") + type_hint + ": " + result.error_message);
+        log_error(std::string("extract") + type_hint + ": i=" + args.input + " " + result.error_message);
         return 1;
     }
 
@@ -1194,7 +1411,20 @@ static int cmd_extract_typed(const Args& args, const char* type_hint)
     std::printf("Bytes:        %s\n", big_int_string(result.bytes_written).c_str());
     std::printf("Extraction complete\n");
 
-    log_info(std::string("extract") + type_hint + " OK: " + std::to_string(result.bytes_written) + " bytes");
+    log_info(std::string("extract") + type_hint + " OK: i=" + args.input + " o=" + result.output_path + " bytes=" + std::to_string(result.bytes_written));
+    
+    // Write pretty log if enabled
+    if (g_pretty_log_enabled)
+    {
+        std::map<std::string, std::string> fields;
+        fields["input"] = args.input;
+        fields["output"] = result.output_path;
+        fields["bytes"] = big_int_string(result.bytes_written);
+        fields["content_type"] = content_type_name(result.detected_type);
+        for (size_t i = 0; i < result.output_files.size(); i++)
+            fields["file_" + std::to_string(i+1)] = result.output_files[i];
+        log_pretty(std::string("extract") + type_hint, fields);
+    }
     return 0;
 }
 
@@ -1213,7 +1443,7 @@ static int cmd_verify(const Args& args)
         reader.open(args.input);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "Error opening CHD: %s\n", e.what());
-        log_error(std::string("verify: ") + e.what());
+        log_error(std::string("verify: i=") + args.input + " " + e.what());
         return 1;
     }
 
@@ -1222,15 +1452,21 @@ static int cmd_verify(const Args& args)
     auto progress = make_progress("Verifying");
 
     VerifyResult vr;
-    if (args.fix)
-        vr = reader.verify_fix(progress);
-    else
-        vr = reader.verify(progress);
+    try {
+        if (args.fix)
+            vr = reader.verify_fix(progress);
+        else
+            vr = reader.verify(progress);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "\nError: %s\n", e.what());
+        log_error("verify: i=" + args.input + " " + e.what());
+        return 1;
+    }
 
     if (!vr.success)
     {
         std::fprintf(stderr, "\nError: %s\n", vr.error_message.c_str());
-        log_error("verify: " + vr.error_message);
+        log_error("verify: i=" + args.input + " " + vr.error_message);
         return 1;
     }
 
@@ -1249,12 +1485,12 @@ static int cmd_verify(const Args& args)
         else
             std::printf("Use --fix to update the header SHA1.\n");
 
-        log_info("verify: SHA1 mismatch" + std::string(args.fix ? " (fixed)" : ""));
+        log_info("verify: i=" + args.input + " SHA1 mismatch" + std::string(args.fix ? " (fixed)" : ""));
         return args.fix ? 0 : 1;
     }
 
     std::printf("Verification complete — integrity OK\n");
-    log_info("verify OK");
+    log_info("verify OK: i=" + args.input);
     return 0;
 }
 
@@ -1329,12 +1565,19 @@ static int cmd_copy(const Args& args)
         osd_num_processors = args.num_processors;
 
     ChdArchiver archiver;
-    auto result = archiver.copy(args.input, output, opts);
+    ArchiveResult result;
+    try {
+        result = archiver.copy(args.input, output, opts);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "\nError: %s\n", e.what());
+        log_error("copy: i=" + args.input + " o=" + output + " " + e.what());
+        return 1;
+    }
 
     if (!result.success)
     {
         std::fprintf(stderr, "\nError: %s\n", result.error_message.c_str());
-        log_error("copy: " + result.error_message);
+        log_error("copy: i=" + args.input + " o=" + output + " " + result.error_message);
         return 1;
     }
 
@@ -1343,7 +1586,7 @@ static int cmd_copy(const Args& args)
     std::printf("Ratio:        %.1f%%\n", result.compression_ratio * 100.0);
     std::printf("Copy complete\n");
 
-    log_info("copy OK: " + std::to_string(result.output_bytes) + " bytes");
+    log_info("copy OK: i=" + args.input + " o=" + output + " bytes=" + std::to_string(result.output_bytes));
     return 0;
 }
 
@@ -1382,7 +1625,7 @@ static int cmd_dumpmeta(const Args& args)
         reader.open(args.input);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "Error opening CHD: %s\n", e.what());
-        log_error(std::string("dumpmeta: ") + e.what());
+        log_error(std::string("dumpmeta: i=") + args.input + " " + e.what());
         return 1;
     }
 
@@ -1411,7 +1654,7 @@ static int cmd_dumpmeta(const Args& args)
         std::printf("%s\n", data.c_str());
     }
 
-    log_info("dumpmeta OK: tag=" + args.meta_tag + " index=" + std::to_string(args.meta_index));
+    log_info("dumpmeta OK: i=" + args.input + " tag=" + args.meta_tag + " index=" + std::to_string(args.meta_index));
     return 0;
 }
 
@@ -1434,11 +1677,17 @@ static int cmd_convertcue(const Args& args)
 
     std::string out_path = args.output.empty() ? args.input : args.output;
 
-    convert_cue_file(args.input, out_path, style);
+    try {
+        convert_cue_file(args.input, out_path, style);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "Error: %s\n", e.what());
+        log_error("convertcue: i=" + args.input + " " + e.what());
+        return 1;
+    }
 
     std::printf("Converted: %s -> %s (style: %s)\n",
                 args.input.c_str(), out_path.c_str(), cue_style_name(style));
-    log_info("convertcue OK: " + out_path + " style=" + cue_style_name(style));
+    log_info("convertcue OK: i=" + args.input + " o=" + out_path + " style=" + cue_style_name(style));
     return 0;
 }
 
@@ -1654,20 +1903,44 @@ int main(int argc, char** argv)
     // Set log level from -log option
     if (!args.log_level.empty())
     {
-        std::string ll = args.log_level;
-        for (auto& c : ll) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (ll == "debug")                        g_log_level = LogLevel::Debug;
-        else if (ll == "info")                    g_log_level = LogLevel::Info;
-        else if (ll == "warning" || ll == "warn") g_log_level = LogLevel::Warning;
-        else if (ll == "error")                   g_log_level = LogLevel::Error;
-        else if (ll == "critical")                g_log_level = LogLevel::Critical;
-        else if (ll == "none" || ll == "off")     g_log_level = LogLevel::None;
+        g_log_level = parse_log_level(args.log_level);
     }
 
     std::string cmd = args.command;
 
     // Lowercase the command
     for (auto& c : cmd) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    // Determine pretty log default based on command, then check --result override
+    bool pretty_log_default = false;
+    if (cmd == "read" || cmd == "info" || cmd == "hash")
+    {
+        pretty_log_default = true;
+    }
+    if (cmd == "extract" || cmd == "extractcd" || cmd == "extractdvd" || cmd == "extractraw" ||
+        cmd == "create" || cmd == "createcd" || cmd == "createdvd" || cmd == "createraw" ||
+        cmd == "createhd" || cmd == "extracthd" || cmd == "auto")
+    {
+        pretty_log_default = false;
+    }
+
+    // --result override: on/off or format-specific
+    if (!args.result_format.empty())
+    {
+        std::string rf = args.result_format;
+        for (auto& c : rf) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (rf == "on" || rf == "yes" || rf == "true" || rf == "1")
+            g_pretty_log_enabled = true;
+        else if (rf == "off" || rf == "no" || rf == "false" || rf == "0")
+            g_pretty_log_enabled = false;
+        else
+            // For hash, treat as format specifier; for others, treat as on
+            g_pretty_log_enabled = (cmd == "hash") || pretty_log_default;
+    }
+    else
+    {
+        g_pretty_log_enabled = pretty_log_default;
+    }
 
     std::printf("chdlite - CHD disc image tool v%d.%d.%d\n",
                 VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH);

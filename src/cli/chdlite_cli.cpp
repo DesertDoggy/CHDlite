@@ -313,6 +313,7 @@ struct Args
     std::string hash_dir;               // --hash-dir <path|"disc"> override .hashes output dir
                                         //   "disc" = next to input file
     int         cue_style = -1;          // -style 0/1/2 → CueStyle::Chdman/Redump/RedumpCatalog (-1 = default)
+    bool        best = false;             // --best → maximum compression ratio
 };
 
 static void print_usage()
@@ -363,6 +364,7 @@ static void print_usage()
         "                              Default: <exe>/logs/  Special: \"disc\" = next to input\n"
         "  -log <level>                Log level: info, error, none (default: info)\n"
         "  --log-dir <path>            Directory for chdlite.log  (default: <exe>/logs/)\n"
+        "  --best                      Maximum compression (zstd+lzma+zlib / flac)\n"
         "  -style <n>                  CUE style: 0=chdman 1=redump 2=redump+catalog\n"
         "  -v, --verbose               Verbose output\n"
         "\n",
@@ -453,6 +455,7 @@ static Args parse_args(int argc, char** argv)
         else if (arg == "--log-dir")                    a.log_dir = next();
         else if (arg == "--hash-dir")                   a.hash_dir = next();
         else if (arg == "-style" || arg == "--style" || arg == "--cue-style") a.cue_style = std::stoi(next());
+        else if (arg == "--best")                       a.best = true;
         else if (arg == "-hash" || arg == "--hash")
         {
             // -hash with optional value: if next arg looks like a flag, use default SHA1
@@ -883,6 +886,7 @@ static int cmd_create(const Args& args)
     opts.unit_bytes = args.unit_size;
     opts.num_processors = args.num_processors;
     opts.detect_title = true;
+    opts.best = args.best;
 
     // Parse compression
     if (!args.compression.empty())
@@ -933,6 +937,8 @@ static int cmd_create(const Args& args)
         std::printf("Parent CHD:   %s\n", args.input_parent.c_str());
     if (opts.has_custom_compression())
         std::printf("Compression:  %s\n", codec_list_string(opts.compression).c_str());
+    else if (opts.best)
+        std::printf("Compression:  best (zstd+lzma+zlib / flac)\n");
     else
         std::printf("Compression:  auto (smart defaults)\n");
     if (opts.hunk_bytes)
@@ -982,6 +988,7 @@ static int cmd_create_typed(const Args& args, const char* type_hint)
     opts.unit_bytes = args.unit_size;
     opts.num_processors = args.num_processors;
     opts.detect_title = true;
+    opts.best = args.best;
 
     if (!args.compression.empty())
     {

@@ -126,9 +126,9 @@ static const chd_codec_type s_default_dvd_compression[4] =
 static const chd_codec_type s_ps2_dvd_compression[4] =
     { CHD_CODEC_ZLIB, CHD_CODEC_NONE, CHD_CODEC_NONE, CHD_CODEC_NONE };
 
-// PS2 CD: cdzl (CD ZLIB)
+// PS2 CD: cdzl, cdfl (CD ZLIB + FLAC for audio — Android emulator compatible)
 static const chd_codec_type s_ps2_cd_compression[4] =
-    { CHD_CODEC_CD_ZLIB, CHD_CODEC_NONE, CHD_CODEC_NONE, CHD_CODEC_NONE };
+    { CHD_CODEC_CD_ZLIB, CHD_CODEC_CD_FLAC, CHD_CODEC_NONE, CHD_CODEC_NONE };
 
 // Other DVD: zstd
 static const chd_codec_type s_smart_dvd_compression[4] =
@@ -137,6 +137,13 @@ static const chd_codec_type s_smart_dvd_compression[4] =
 // Other CD / GD-ROM: cdzs, cdfl (ZSTD wins data sectors; FLAC wins audio sectors)
 static const chd_codec_type s_smart_cd_compression[4] =
     { CHD_CODEC_CD_ZSTD, CHD_CODEC_CD_FLAC, CHD_CODEC_NONE, CHD_CODEC_NONE };
+
+// --best: maximum compression ratio (slower compress + decompress)
+static const chd_codec_type s_best_dvd_compression[4] =
+    { CHD_CODEC_ZSTD, CHD_CODEC_LZMA, CHD_CODEC_ZLIB, CHD_CODEC_NONE };
+
+static const chd_codec_type s_best_cd_compression[4] =
+    { CHD_CODEC_CD_ZSTD, CHD_CODEC_CD_LZMA, CHD_CODEC_CD_ZLIB, CHD_CODEC_CD_FLAC };
 
 // Pick the best default compression array based on detected system and content format.
 // Returns null if no smart default applies (caller falls back to chdman legacy defaults).
@@ -153,6 +160,16 @@ static const chd_codec_type* smart_compression_for(GamePlatform system, const st
     if (format == "cd" || format == "gd")
         return s_smart_cd_compression;
     return nullptr;  // raw / unknown — use chdman defaults
+}
+
+// --best: maximum compression ratio arrays
+static const chd_codec_type* best_compression_for(const std::string& format)
+{
+    if (format == "dvd")
+        return s_best_dvd_compression;
+    if (format == "cd" || format == "gd")
+        return s_best_cd_compression;
+    return s_default_raw_compression;  // raw/HD: legacy defaults already maximal
 }
 
 // Pick the default hunk size based on system and format (0 = let each archive_* decide)
@@ -417,7 +434,8 @@ ArchiveResult ChdArchiver::archive_raw(const std::string& input_path,
 
         // Resolve compression
         chd_codec_type compression[4];
-        Impl::resolve_compression(options, s_default_raw_compression, compression);
+        Impl::resolve_compression(options,
+            options.best ? s_best_dvd_compression : s_default_raw_compression, compression);
 
         // Handle parent CHD
         chd_file parent;
@@ -510,7 +528,8 @@ ArchiveResult ChdArchiver::archive_cd(const std::string& input_path,
 
         // Resolve compression
         chd_codec_type compression[4];
-        Impl::resolve_compression(options, s_default_cd_compression, compression);
+        Impl::resolve_compression(options,
+            options.best ? s_best_cd_compression : s_default_cd_compression, compression);
 
         // Handle parent
         chd_file parent;
@@ -595,7 +614,8 @@ ArchiveResult ChdArchiver::archive_dvd(const std::string& input_path,
 
         // Resolve compression
         chd_codec_type compression[4];
-        Impl::resolve_compression(options, s_default_dvd_compression, compression);
+        Impl::resolve_compression(options,
+            options.best ? s_best_dvd_compression : s_default_dvd_compression, compression);
 
         // Handle parent
         chd_file parent;
@@ -711,14 +731,18 @@ ArchiveResult ChdArchiver::archive(const std::string& input_path,
     // Apply smart defaults when user hasn't specified codecs
     ArchiveOptions effective = options;
     if (!options.has_custom_compression()) {
-        const chd_codec_type* smart = smart_compression_for(detection.game_platform, smart_fmt);
-        if (smart) {
+        const chd_codec_type* chosen = nullptr;
+        if (options.best)
+            chosen = best_compression_for(smart_fmt);
+        else
+            chosen = smart_compression_for(detection.game_platform, smart_fmt);
+        if (chosen) {
             // Convert mame codec types back to our Codec enum for the effective options
             // Actually, we'll inject them directly in the archive_* calls via a different path.
             // Simpler: store the smart defaults in the compression[] array.
             for (int i = 0; i < 4; i++) {
                 // Map back from chd_codec_type to Codec
-                switch (smart[i]) {
+                switch (chosen[i]) {
                 case CHD_CODEC_ZLIB:     effective.compression[i] = Codec::Zlib;     break;
                 case CHD_CODEC_ZSTD:     effective.compression[i] = Codec::Zstd;     break;
                 case CHD_CODEC_LZMA:     effective.compression[i] = Codec::LZMA;     break;

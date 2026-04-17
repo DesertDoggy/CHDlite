@@ -98,21 +98,19 @@
   | Content | Default codec set | Rationale |
   |---------|-------------------|-----------|
   | CD-ROM / GD-ROM | `cdzs, cdfl` | ZSTD fastest for data hunks; FLAC wins audio; skip LZMA |
-  | DVD — PS2 | `zlib` | Android PS2 emulator compatibility |
+  | DVD — PS2 | `zlib, cdfl` | Android PS2 emulator compatibility; FLAC for audio tracks |
   | DVD — PSP / generic | `zstd` | Fast decomp (~139 MB/s), good ratio |
-  | `--best` preset | `cdlz, cdzl, cdfl` (CD) / `lzma, zlib` (DVD) | Max ratio, slow decomp |
+  | `--best` preset | `cdzs, cdlz, cdzl, cdfl` (CD) / `zstd, lzma, zlib` (DVD) | Max ratio, slower |
 
-  Note: chdman default `cdlz, cdzl, cdfl` prioritises compression ratio over decomp speed.
-  CHDlite differs intentionally — same ratio for most content, 3× faster reads.
+  Note: Priority on decomp speed, except when compatibility issues.
 
   ### Tasks
-  - [ ] Set CHDlite default CD codec to `cdzs, cdfl`
-  - [ ] Set CHDlite default DVD codec to `zlib` for PS2, `zstd` for others (platform-aware)
-  - [ ] Expose `--compression` override (already parsed, verify it flows through to archiver)
-  - [ ] Add `--best` preset alias → `cdlz, cdzl, cdfl` (CD) / `lzma, zlib` (DVD)
-  - [ ] Support `-c none` producing a truly uncompressed CHD (chdman-compatible `CHD_CODEC_NONE`)
-        Currently `Codec::None` is the auto-detect sentinel — need a distinct `Codec::Uncompressed`
-        (maps to CHD v5 codec tag `0x00000000`) so `-c none` stores raw hunks.
+  - [x] Set CHDlite default CD codec to `cdzs, cdfl`
+  - [x] Set CHDlite default DVD codec to `zlib` for PS2, `zstd` for others (platform-aware)
+  - [x] Fix PS2 CD default to include FLAC for audio tracks (`cdzl, cdfl`)
+  - [x] Expose `--compression` override (already parsed, verify it flows through to archiver)
+  - [x] Add `--best` preset: CD = `cdzs, cdlz, cdzl, cdfl` / DVD = `zstd, lzma, zlib`
+  - [ ] ~~Support `-c none`~~ — deliberately unsupported (speedpatch issues with uncompressed CHD)
 
 # When using chdman commands need -i -o, and depending on command some other options also.
 -> make auto if not specified. (except -i ofcourse)

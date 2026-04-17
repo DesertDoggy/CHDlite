@@ -341,6 +341,7 @@ struct ArchiveOptions
     Codec       codec = Codec::None;        // None = auto-detect
     Codec       compression[4] = { Codec::None, Codec::None, Codec::None, Codec::None };
     bool        uncompressed = false;       // true = store raw (no compression)
+    bool        best = false;               // true = maximum ratio (zstd,lzma,zlib / cdzs,cdlz,cdzl,cdfl)
 
     uint32_t    hunk_bytes = 0;             // 0 = auto (CD: 2448*8, DVD: 2048, HD: 4096 etc.)
     uint32_t    unit_bytes = 0;             // 0 = auto

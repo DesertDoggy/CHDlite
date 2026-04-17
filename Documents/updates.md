@@ -1,0 +1,37 @@
+# CHDlite Updates & Release Notes
+## v0.2.0
+
+### Speed Optimization
+- zlib-ng integration
+- xxHash AVX2 auto-dispatch
+- LZMA encoder persistent instance
+- FLAC 3→2 encode elimination
+- CRC16 slice-by-16
+- Sequential read hints (cross-platform)
+- SHA1 SIMD dispatch
+- CMakeLists.txt SIMD compile flags (-mavx2 -msse4.2 -mssse3)
+- Per-file pipeline deferred hash computation
+- N_SLOTS=3 triple-buffer pipeline
+- Audio byte-swap auto-vectorization
+- Remove 4-core cap on thread pool
+- Multi-file batch thread budget
+- Proper CUE sheet parsing for all disc formats
+- Tests: 106 PASS / 1 FAIL
+
+### Logging and Error Handling
+- Dual-log system: Structured `error.log` (pipe-delimited) + command-specific pretty logs (`chdread.log`, `chdhash.log`, etc.)
+- `--result` flag: Pretty log on/off control
+- `-log <level>` control: Verbosity levels (debug, info, warning, error, critical, none)
+- N/A logging for empty metadata fields
+
+
+### Others
+- Extend read to support non-CHD files (ISO images, CD images, etc.)
+- Terminology change: "system" → "platform" (detect_system → detect_game_platform)
+- chdcomp binary with automatic `--best` compression (CD: `cdzs,cdlz,cdzl,cdfl` / DVD: `zstd,lzma,zlib`)
+- `--best` compression preset for create command
+- Default `-o` flags for auto-generated output paths
+- `verify`, `copy`, `dumpmeta` commands with full option support
+
+---
+

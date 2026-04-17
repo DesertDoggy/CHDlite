@@ -29,18 +29,17 @@ Built on MAME's CHD/chdman implementation with a C++
 
 Pre-built binaries for macOS, (Linux WIP) and Windows are available on the [Releases](https://github.com/DesertDoggy/CHDlite/releases) page.
 
-Each release contains three binaries:
+Each release contains four binaries:
 
-| Binary     | Drag-and-drop default       |
-|------------|-----------------------------|
-| `chdlite`  | Auto (extract or create)    | Main binary
-| `chdread`  | Display CHD info            | 
-| `chdhash`  | Hash CHD content            |
+| Binary      | Default Behavior            | Purpose |
+|-------------|-----------------------------|----------|
+| `chdlite`   | Auto (extract or create)    | Main binary, speed-optimized |
+| `chdread`   | Display CHD info            | Symlink to chdlite |
+| `chdhash`   | Hash CHD content            | Symlink to chdlite |
+| `chdcomp`   | Create with max compression | Symlink to chdlite, uses `--best` automatically |
 
-Windows
-chdlite/chdread/chdhash are same binary with different defaults.
-Mac/Linux
-chdread/chdhash are symlinks of chdlite.
+**Windows:** All binaries are copies of the same executable with different defaults.  
+**Mac/Linux:** `chdread`, `chdhash`, and `chdcomp` are symlinks to `chdlite`.
 
 ## Usage
 
@@ -68,11 +67,9 @@ CHDlite picks codecs automatically based on content type with priority on speed,
 | DVD — PS2 | `zlib` | Some Android PS2 emulators only support `zlib` for DVD CHDs. Using ZSTD would break compatibility on mobile. |
 | DVD — PSP / generic | `zstd` | Fast decompression, especially when hashing CHD contents — which requires reading and decompressing every hunk. |
 
-**`--best` preset** (not yet implemented): `cdlz, cdzl, cdfl` for CD / `lzma, zlib` for DVD — maximises compression ratio at the cost of slower decompression, matching chdman's defaults.
+**`--best` preset**: `cdzs, cdlz, cdzl, cdfl` for CD / `zstd, lzma, zlib` for DVD — maximises compression ratio at the cost of slower decompression, matching chdman's defaults. Use `chdcomp` binary for automatic `--best` compression.
 
-> **Why not match chdman's default (`cdlz, cdzl, cdfl`)?**  
-> chdman's 3-slot default prioritises ratio over speed.  
-> CHDlite puts priority on compatibility and speed. Especially decompression speed for hashing. 
+
 > Compatibility tests are limited. If you experience any issues with certain emulators, reports will be appreciated.
 
 
@@ -101,7 +98,8 @@ extractraw -i <input.chd> -o <output>    Extract raw from CHD
 -sb, --splitbin              Split output into per-track bin files
 --no-splitbin                Single bin file for all tracks
 -hash <algorithms>           Hash algorithms: sha1, md5, crc32, sha256, xxh3
--log <level>                 Log level: info, error, none
+--result <on|off|format>     Pretty log output control (on/off, or for hash: text/json/lot/svg)
+-log <level>                 Structured log level: debug, info, warning, error, critical, none
 -v, --verbose                Verbose output
 ```
 

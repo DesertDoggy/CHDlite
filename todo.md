@@ -1,21 +1,4 @@
 # CHDlite TODO
-
-## Read Functionality
-- [x] **Extend read to support non-CHD files**
-  - Currently: CHD files only
-  - Add support for: ISO images, CD images, etc.
-  - Use auto `platform` detect to distinguish file types
-  - Auto-detect should work on raw/non-CHD files too
-
-## Terminology Change: "system" → "platform"
-- [x] **Rename for consistency with main app**
-  - Update codebase: `detect_system` → `detect_game_platform` (code), displayed as "Platform:"
-  - Update API: functions/variables using "system" → "game_platform"
-  - Reasoning: "platform" is clearer (refers to game console)
-  - "system" is ambiguous (could mean OS/computer)
-  - "game_platform" used in code to avoid confusion with OS platform
-  - This matches main application terminology
-
 ## macOS
 - [ ] **Drag and Drop** - Needs simple GUI (defer, time-consuming)
   - Build a minimal native macOS window/widget app to accept dropped files
@@ -33,106 +16,32 @@
   - Default: also write `.hashes` log file alongside input file
   - Behaviour: drop file(s) → compute hash(es) → print + save `.hashes` → pause
 
-## CD Archiving Codec Selection
-- [x] **Define codec strategy for auto-compression** — research complete, defaults confirmed by benchmark
+## SIMD Optimizations & Performance Patches
+- [x] **SIMD Optimization 1**: Replace zlib with zlib-ng
+- [x] **SIMD Optimization 2**: xxHash AVX2 auto-dispatch
+- [x] **SIMD Optimization 3**: LZMA encoder persistent instance
+- [x] **SIMD Optimization 4**: FLAC 3→2 encode elimination
+- [x] **SIMD Optimization 5**: CRC16 slice-by-16
+- [x] **SIMD Optimization 6**: Sequential read hints (cross-platform)
+- [x] **SIMD Optimization 7**: SHA1 SIMD dispatch (SSE2/SHA-NI)
+- [ ] **SIMD Optimization 8**: SHA256 SIMD dispatch (future, lower priority)
+- [x] **SIMD Optimization 9**: CMakeLists SIMD compile flags
+- [x] **SIMD Optimization 10**: Per-file pipeline deferred hash
+- [x] **SIMD Optimization 11**: N_SLOTS=3 triple-buffer pipeline
+- [ ] **SIMD Optimization 12**: LZMA ASM decoder (LzmaDecOpt.asm, requires UASM)
+- [x] **SIMD Optimization 13**: Audio byte-swap auto-vectorization
+- [x] **SIMD Optimization 14**: Remove 4-core cap, wire `-np` flag
+- [x] **SIMD Optimization 15**: Multi-file batch thread budget
 
-  ### Research findings
-
-  #### How the 4-slot system works
-  - CHD V5 stores up to 4 codec types in the header. Each hunk is independently compressed
-    with whichever of the 4 codecs produces the smallest result. This is a competition, not
-    a pipeline — the encoder tries all slots and writes the winner + a 1-byte tag.
-  - DVD/raw CHDs use generic codecs (LZMA, ZLIB, HUFF, FLAC).
-  - CD/GD CHDs use CD-specific compound codecs (cdlz, cdzl, cdzs, cdfl).
-
-  #### What the CD-specific codecs do internally (chdcodec.cpp)
-  All CD codecs share the same pre-processing pipeline:
-  1. Strip ECC/sync data from data sectors (saves ~280 bytes/sector, regenerated on decompress)
-  2. Split each hunk into: `[sector_data_all | subcode_data_all]` (de-interleaved)
-  3. Compress the two parts independently with two sub-codecs:
-     - `cdlz` = sector data: LZMA  + subcode: ZLIB
-     - `cdzl` = sector data: ZLIB  + subcode: ZLIB
-     - `cdzs` = sector data: ZSTD  + subcode: ZSTD
-     - `cdfl` = sector data: **FLAC** (treating raw PCM as audio) + subcode: ZLIB
-  - FLAC is NOT limited to audio tracks. `cdfl` runs on every sector in the hunk regardless
-    of track type. For audio tracks (raw PCM 16-bit stereo @ 44.1 kHz) it wins decisively.
-    For data sectors it usually loses to LZMA/ZSTD (random-looking compressed data).
-
-  #### chdman default codec set for CD/GD
-  ```
-  s_default_cd_compression = { CHD_CODEC_CD_LZMA, CHD_CODEC_CD_ZLIB, CHD_CODEC_CD_FLAC }
-  ```
-  Only 3 slots used (4th = 0/none). No `cdzs` in the chdman default.
-
-  #### What our CHD samples actually use (from `chdlite read`)
-  | File | Platform | Content | Compression |
-  |------|----------|---------|-------------|
-  | PS1 | CD-ROM 1 track data | `cdlz, cdzl, cdfl` |
-  | Saturn | CD-ROM 2 tracks (1 audio) | `cdlz, cdzl, cdfl` |
-  | | PC Engine | CD-ROM 22 tracks (20 audio) | `cdzs, cdfl` |
-  | Dreamcast | GD-ROM 3 tracks (1 audio) | `cdzs, cdzl, cdfl` |
-  | PS2 | DVD | `zlib` |
-  | PSP | DVD | `zstd` |
-
-  #### Benchmark results — confirmed (see Documents/Codec_Benchmark_Results.md)
-  M4 MacBook Air, 4 threads, real disc images:
-  - `cdzs,cdfl` achieves same ratio as `cdlz,cdzl,cdfl` on most games (0–3% worse),
-    decompresses **2–3× faster** (48–79 MB/s vs 23–29 MB/s)
-  - More slots = slower compression, no meaningful ratio gain (PCEngine: all 4 variants → ratio 0.503)
-  - DVD: `zstd` = 138 MB/s decomp (PSP), `zlib` = 103 MB/s (PS2 safe choice, negligible ratio penalty)
-  - `cdfl` alone is fast to decomp only because data sectors end up near-uncompressed (bad ratio)
-
-  #### Decompression speed (affects emulators reading CHDs directly + `hash` speed)
-  Fastest → slowest decompression:
-  - **ZSTD** — fastest decompressor by design (asymmetric: slow compress, fast decompress)
-  - **ZLIB** — fast, universally supported
-  - **FLAC** — fast for true audio PCM; slower for data patterns
-  - **LZMA** — slowest decompressor (symmetric: slow both ways, best ratio)
-
-  #### Emulator compatibility
-  - **PS2 (DVD)**: Android PS2 emulators only support `zlib` — use `zlib` for PS2
-  - **PSP (DVD)**: PPSSPP modern builds support zstd
-  - **CD/GD platforms**: most emulators use MAME libchd which supports all CD codecs
-
-  #### CHDlite creation default strategy
-  | Content | Default codec set | Rationale |
-  |---------|-------------------|-----------|
-  | CD-ROM / GD-ROM | `cdzs, cdfl` | ZSTD fastest for data hunks; FLAC wins audio; skip LZMA |
-  | DVD — PS2 | `zlib, cdfl` | Android PS2 emulator compatibility; FLAC for audio tracks |
-  | DVD — PSP / generic | `zstd` | Fast decomp (~139 MB/s), good ratio |
-  | `--best` preset | `cdzs, cdlz, cdzl, cdfl` (CD) / `zstd, lzma, zlib` (DVD) | Max ratio, slower |
-
-  Note: Priority on decomp speed, except when compatibility issues.
-
-  ### Tasks
-  - [x] Set CHDlite default CD codec to `cdzs, cdfl`
-  - [x] Set CHDlite default DVD codec to `zlib` for PS2, `zstd` for others (platform-aware)
-  - [x] Fix PS2 CD default to include FLAC for audio tracks (`cdzl, cdfl`)
-  - [x] Expose `--compression` override (already parsed, verify it flows through to archiver)
-  - [x] Add `--best` preset: CD = `cdzs, cdlz, cdzl, cdfl` / DVD = `zstd, lzma, zlib`
+  ### Uncompressed CHD (Low priority)
   - [ ] ~~Support `-c none`~~ — deliberately unsupported (speedpatch issues with uncompressed CHD)
 
-## chdman Command Defaults
-- [x] **Default `-o` for create\* commands** — auto-generate `stem.chd` from input path
-- [x] **Default `-o` for extract\* commands** — auto-generate from metadata tag:
-  - CHTR/CHT2/CHCD → `.cue`, CHGD/CHGT → `.gdi`, DVD → `.iso`, GDDD → `.bin`
-  - CD: leave to extractor (auto-picks `.cue` or `.gdi` from tags)
+## chdman Command Defaults n(low priority)
 - [ ] **`createraw` `-us` warning** — warn + default to 512 when omitted (safe for speedpatch)
 - [ ] **`createhd`** — keep as alias for createraw (no CHS/template/blank disk support)
-
-## Missing chdman-compatible Commands
-- [ ] **`verify`** — read all data, recompute SHA1, compare with header; `--fix` updates header
-  - Currently listed in help but not dispatched (bug)
-- [ ] **`copy`** — re-compress CHD→CHD with different codecs/hunk_size
-  - Supports `-c`, `-hs`, `--best`, `-np`, `-ip`/`-op`
-- [ ] **`dumpmeta`** — raw metadata dump by 4-char tag + index
-  - Also add raw metadata to `read -v` (verbose mode)
-  - `read` = dumpmeta (formatted) + autodetect extras (platform, title, manufacturer)
 
 ### Deferred / Out of Scope
 - [ ] **`listtemplates`** — 13 pre-defined HD geometries for MAME arcade hardware (niche, skip for now)
 - [ ] **`createld` / `extractld`** — LaserDisc (AVI), extremely niche
 - [ ] **`addmeta` / `delmeta`** — metadata write ops (special-purpose)
 
-# When using chdman commands need -i -o, and depending on command some other options also.
--> make auto if not specified. (except -i ofcourse)

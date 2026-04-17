@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 4.3)
 
 # Force static linking and Windows triplet setup
 if(WIN32 AND NOT DEFINED VCPKG_TARGET_TRIPLET)
@@ -14,7 +14,7 @@ if(NOT CMAKE_TOOLCHAIN_FILE AND WIN32)
     endif()
 endif()
 
-project(CHDlite VERSION 0.1.0 LANGUAGES C CXX)
+project(CHDlite VERSION 0.2.0 LANGUAGES C CXX)
 
 set(BUILD_SHARED_LIBS OFF)
 

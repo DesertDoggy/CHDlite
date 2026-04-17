@@ -646,6 +646,40 @@ static int cmd_read(const Args& args)
         std::printf("Manufacturer ID: %s\n", det.manufacturer_id.empty() ? "N/A" : det.manufacturer_id.c_str());
     }
 
+    // Raw metadata dump (verbose only) — enumerate all known tags
+    if (args.verbose)
+    {
+        struct TagDef { const char* name; uint32_t tag; };
+        auto mk = [](char a, char b, char c, char d) -> uint32_t {
+            return (uint32_t(uint8_t(a)) << 24) | (uint32_t(uint8_t(b)) << 16)
+                 | (uint32_t(uint8_t(c)) << 8)  | uint32_t(uint8_t(d));
+        };
+        TagDef tags[] = {
+            { "CHT2", mk('C','H','T','2') },   // CD track (V5)
+            { "CHTR", mk('C','H','T','R') },   // CD track (V3/V4)
+            { "CHGT", mk('C','H','G','T') },   // GD-ROM track (V5)
+            { "CHGD", mk('C','H','G','D') },   // GD-ROM track (V3/V4)
+            { "DVD ", mk('D','V','D',' ') },    // DVD
+            { "GDDD", mk('G','D','D','D') },    // Hard disk
+            { "IDNT", mk('I','D','N','T') },    // Hard disk identity
+            { "CIS ", mk('C','I','S',' ') },    // PCMCIA CIS
+            { "AVAV", mk('A','V','A','V') },    // A/V LaserDisc
+            { "AVLD", mk('A','V','L','D') },    // A/V LaserDisc
+        };
+
+        bool has_meta = false;
+        for (auto& td : tags)
+        {
+            for (int ix = 0; ix < 100; ix++)
+            {
+                std::string data = reader.read_metadata(td.tag, ix);
+                if (data.empty()) break;
+                if (!has_meta) { std::printf("Metadata:\n"); has_meta = true; }
+                std::printf("  %s[%d]: %s\n", td.name, ix, data.c_str());
+            }
+        }
+    }
+
     log_info("read OK");
     return 0;
 }

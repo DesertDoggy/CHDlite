@@ -146,7 +146,7 @@ int main(int argc, char* argv[])
         tc.name = "PS1_CD";
         tc.input_path = mp("PS1/PoPoRoGue (Japan).cue");
         tc.expected_system = "PlayStation";
-        tc.compare_files.push_back(mp("PS1/PoPoRoGue (Japan).bin"));
+        tc.compare_files.push_back(mp("PS1/PoPoRoGue (Japan) (Track 1).bin"));
         tests.push_back(std::move(tc));
     }
 

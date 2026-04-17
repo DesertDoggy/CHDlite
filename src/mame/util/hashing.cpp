@@ -313,183 +313,191 @@ inline void sha1_process_arm(std::array<uint32_t, 5> &st, uint32_t *data) noexce
 SHA_TARGET
 inline void sha1_process_x86(std::array<uint32_t, 5> &st, uint32_t *data) noexcept
 {
+	// Based on the canonical SHA-NI reference (noloader/SHA-Intrinsics),
+	// adapted for MAME's reversed state layout: st = {E, D, C, B, A}.
+	//
+	// SHA-NI register conventions:
+	//   abcd: lane 3=A, lane 2=B, lane 1=C, lane 0=D
+	//   e:    lane 3=E  (other lanes carry message schedule data)
+	//
+	// Message words must be in lane 3=W[n], lane 0=W[n+3] order,
+	// which is the reverse of what _mm_loadu_si128 produces.
+	// We use _mm_shuffle_epi32(x, 0x1B) to reverse word order.
+
 	__m128i abcd, e0, e1;
 	__m128i msg0, msg1, msg2, msg3;
 	__m128i abcd_save, e_save;
+	constexpr int REV = 0x1B; // shuffle mask to reverse 4 dwords
 
-	// Load state: ABCD in one register, E in another
-	abcd = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&st[0]));
-	e0   = _mm_set_epi32(st[4], 0, 0, 0);
-	// SHA-NI expects DCBA order
-	abcd = _mm_shuffle_epi32(abcd, 0x1B);
+	// Load state
+	abcd = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&st[1])); // [D, C, B, A]
+	e0   = _mm_set_epi32(st[0], 0, 0, 0); // E in lane 3
 
 	abcd_save = abcd;
-	e_save = e0;
+	e_save    = e0;
 
-	// Load message — data[] is already in big-endian uint32_t form
-	// (sha1_creator::append byte-swaps via XOR swizzle on little-endian)
-	msg0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&data[0]));
-	msg1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&data[4]));
-	msg2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&data[8]));
-	msg3 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&data[12]));
+	// Load and word-reverse message blocks (data[] is byte-swapped but in
+	// low-to-high lane order; SHA-NI needs first word in lane 3)
+	msg0 = _mm_shuffle_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i*>(&data[0])),  REV);
+	msg1 = _mm_shuffle_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i*>(&data[4])),  REV);
+	msg2 = _mm_shuffle_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i*>(&data[8])),  REV);
+	msg3 = _mm_shuffle_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i*>(&data[12])), REV);
 
 	// Rounds 0-3
 	e0   = _mm_add_epi32(e0, msg0);
 	e1   = abcd;
 	abcd = _mm_sha1rnds4_epu32(abcd, e0, 0);
-	e0   = _mm_sha1nexte_epu32(e0, msg1);
-	msg0 = _mm_sha1msg1_epu32(msg0, msg1);
 
 	// Rounds 4-7
-	e1   = _mm_sha1nexte_epu32(e1, msg2); (void)e1;
-	e1   = abcd;
-	abcd = _mm_sha1rnds4_epu32(abcd, e0, 0);
-	e0   = _mm_sha1nexte_epu32(e0, msg2);
-	msg1 = _mm_sha1msg1_epu32(msg1, msg2);
-	msg0 = _mm_xor_si128(msg0, msg2);
+	e1   = _mm_sha1nexte_epu32(e1, msg1);
+	e0   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e1, 0);
+	msg0 = _mm_sha1msg1_epu32(msg0, msg1);
 
 	// Rounds 8-11
+	e0   = _mm_sha1nexte_epu32(e0, msg2);
 	e1   = abcd;
 	abcd = _mm_sha1rnds4_epu32(abcd, e0, 0);
-	e0   = _mm_sha1nexte_epu32(e0, msg3);
-	msg2 = _mm_sha1msg1_epu32(msg2, msg3);
+	msg1 = _mm_sha1msg1_epu32(msg1, msg2);
+	msg0 = _mm_xor_si128(msg0, msg2);
 	msg0 = _mm_sha1msg2_epu32(msg0, msg3);
-	msg1 = _mm_xor_si128(msg1, msg3);
 
 	// Rounds 12-15
-	e1   = abcd;
-	abcd = _mm_sha1rnds4_epu32(abcd, e0, 0);
-	e0   = _mm_sha1nexte_epu32(e0, msg0);
-	msg3 = _mm_sha1msg1_epu32(msg3, msg0);
+	e1   = _mm_sha1nexte_epu32(e1, msg3);
+	e0   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e1, 0);
+	msg2 = _mm_sha1msg1_epu32(msg2, msg3);
+	msg1 = _mm_xor_si128(msg1, msg3);
 	msg1 = _mm_sha1msg2_epu32(msg1, msg0);
-	msg2 = _mm_xor_si128(msg2, msg0);
 
 	// Rounds 16-19
+	e0   = _mm_sha1nexte_epu32(e0, msg0);
 	e1   = abcd;
 	abcd = _mm_sha1rnds4_epu32(abcd, e0, 0);
-	e0   = _mm_sha1nexte_epu32(e0, msg1);
-	msg0 = _mm_sha1msg1_epu32(msg0, msg1);
+	msg3 = _mm_sha1msg1_epu32(msg3, msg0);
+	msg2 = _mm_xor_si128(msg2, msg0);
 	msg2 = _mm_sha1msg2_epu32(msg2, msg1);
-	msg3 = _mm_xor_si128(msg3, msg1);
 
 	// Rounds 20-23
-	e1   = abcd;
-	abcd = _mm_sha1rnds4_epu32(abcd, e0, 1);
-	e0   = _mm_sha1nexte_epu32(e0, msg2);
-	msg1 = _mm_sha1msg1_epu32(msg1, msg2);
+	e1   = _mm_sha1nexte_epu32(e1, msg1);
+	e0   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e1, 1);
+	msg0 = _mm_sha1msg1_epu32(msg0, msg1);
+	msg3 = _mm_xor_si128(msg3, msg1);
 	msg3 = _mm_sha1msg2_epu32(msg3, msg2);
-	msg0 = _mm_xor_si128(msg0, msg2);
 
 	// Rounds 24-27
+	e0   = _mm_sha1nexte_epu32(e0, msg2);
 	e1   = abcd;
 	abcd = _mm_sha1rnds4_epu32(abcd, e0, 1);
-	e0   = _mm_sha1nexte_epu32(e0, msg3);
-	msg2 = _mm_sha1msg1_epu32(msg2, msg3);
+	msg1 = _mm_sha1msg1_epu32(msg1, msg2);
+	msg0 = _mm_xor_si128(msg0, msg2);
 	msg0 = _mm_sha1msg2_epu32(msg0, msg3);
-	msg1 = _mm_xor_si128(msg1, msg3);
 
 	// Rounds 28-31
-	e1   = abcd;
-	abcd = _mm_sha1rnds4_epu32(abcd, e0, 1);
-	e0   = _mm_sha1nexte_epu32(e0, msg0);
-	msg3 = _mm_sha1msg1_epu32(msg3, msg0);
+	e1   = _mm_sha1nexte_epu32(e1, msg3);
+	e0   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e1, 1);
+	msg2 = _mm_sha1msg1_epu32(msg2, msg3);
+	msg1 = _mm_xor_si128(msg1, msg3);
 	msg1 = _mm_sha1msg2_epu32(msg1, msg0);
-	msg2 = _mm_xor_si128(msg2, msg0);
 
 	// Rounds 32-35
+	e0   = _mm_sha1nexte_epu32(e0, msg0);
 	e1   = abcd;
 	abcd = _mm_sha1rnds4_epu32(abcd, e0, 1);
-	e0   = _mm_sha1nexte_epu32(e0, msg1);
-	msg0 = _mm_sha1msg1_epu32(msg0, msg1);
+	msg3 = _mm_sha1msg1_epu32(msg3, msg0);
+	msg2 = _mm_xor_si128(msg2, msg0);
 	msg2 = _mm_sha1msg2_epu32(msg2, msg1);
-	msg3 = _mm_xor_si128(msg3, msg1);
 
 	// Rounds 36-39
-	e1   = abcd;
-	abcd = _mm_sha1rnds4_epu32(abcd, e0, 1);
-	e0   = _mm_sha1nexte_epu32(e0, msg2);
-	msg1 = _mm_sha1msg1_epu32(msg1, msg2);
+	e1   = _mm_sha1nexte_epu32(e1, msg1);
+	e0   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e1, 1);
+	msg0 = _mm_sha1msg1_epu32(msg0, msg1);
+	msg3 = _mm_xor_si128(msg3, msg1);
 	msg3 = _mm_sha1msg2_epu32(msg3, msg2);
-	msg0 = _mm_xor_si128(msg0, msg2);
 
 	// Rounds 40-43
+	e0   = _mm_sha1nexte_epu32(e0, msg2);
 	e1   = abcd;
 	abcd = _mm_sha1rnds4_epu32(abcd, e0, 2);
-	e0   = _mm_sha1nexte_epu32(e0, msg3);
-	msg2 = _mm_sha1msg1_epu32(msg2, msg3);
+	msg1 = _mm_sha1msg1_epu32(msg1, msg2);
+	msg0 = _mm_xor_si128(msg0, msg2);
 	msg0 = _mm_sha1msg2_epu32(msg0, msg3);
-	msg1 = _mm_xor_si128(msg1, msg3);
 
 	// Rounds 44-47
-	e1   = abcd;
-	abcd = _mm_sha1rnds4_epu32(abcd, e0, 2);
-	e0   = _mm_sha1nexte_epu32(e0, msg0);
-	msg3 = _mm_sha1msg1_epu32(msg3, msg0);
+	e1   = _mm_sha1nexte_epu32(e1, msg3);
+	e0   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e1, 2);
+	msg2 = _mm_sha1msg1_epu32(msg2, msg3);
+	msg1 = _mm_xor_si128(msg1, msg3);
 	msg1 = _mm_sha1msg2_epu32(msg1, msg0);
-	msg2 = _mm_xor_si128(msg2, msg0);
 
 	// Rounds 48-51
+	e0   = _mm_sha1nexte_epu32(e0, msg0);
 	e1   = abcd;
 	abcd = _mm_sha1rnds4_epu32(abcd, e0, 2);
-	e0   = _mm_sha1nexte_epu32(e0, msg1);
-	msg0 = _mm_sha1msg1_epu32(msg0, msg1);
+	msg3 = _mm_sha1msg1_epu32(msg3, msg0);
+	msg2 = _mm_xor_si128(msg2, msg0);
 	msg2 = _mm_sha1msg2_epu32(msg2, msg1);
-	msg3 = _mm_xor_si128(msg3, msg1);
 
 	// Rounds 52-55
-	e1   = abcd;
-	abcd = _mm_sha1rnds4_epu32(abcd, e0, 2);
-	e0   = _mm_sha1nexte_epu32(e0, msg2);
-	msg1 = _mm_sha1msg1_epu32(msg1, msg2);
+	e1   = _mm_sha1nexte_epu32(e1, msg1);
+	e0   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e1, 2);
+	msg0 = _mm_sha1msg1_epu32(msg0, msg1);
+	msg3 = _mm_xor_si128(msg3, msg1);
 	msg3 = _mm_sha1msg2_epu32(msg3, msg2);
-	msg0 = _mm_xor_si128(msg0, msg2);
 
 	// Rounds 56-59
+	e0   = _mm_sha1nexte_epu32(e0, msg2);
 	e1   = abcd;
 	abcd = _mm_sha1rnds4_epu32(abcd, e0, 2);
-	e0   = _mm_sha1nexte_epu32(e0, msg3);
-	msg2 = _mm_sha1msg1_epu32(msg2, msg3);
+	msg1 = _mm_sha1msg1_epu32(msg1, msg2);
+	msg0 = _mm_xor_si128(msg0, msg2);
 	msg0 = _mm_sha1msg2_epu32(msg0, msg3);
-	msg1 = _mm_xor_si128(msg1, msg3);
 
 	// Rounds 60-63
-	e1   = abcd;
-	abcd = _mm_sha1rnds4_epu32(abcd, e0, 3);
-	e0   = _mm_sha1nexte_epu32(e0, msg0);
-	msg3 = _mm_sha1msg1_epu32(msg3, msg0);
+	e1   = _mm_sha1nexte_epu32(e1, msg3);
+	e0   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e1, 3);
+	msg2 = _mm_sha1msg1_epu32(msg2, msg3);
+	msg1 = _mm_xor_si128(msg1, msg3);
 	msg1 = _mm_sha1msg2_epu32(msg1, msg0);
-	msg2 = _mm_xor_si128(msg2, msg0);
 
 	// Rounds 64-67
+	e0   = _mm_sha1nexte_epu32(e0, msg0);
 	e1   = abcd;
 	abcd = _mm_sha1rnds4_epu32(abcd, e0, 3);
-	e0   = _mm_sha1nexte_epu32(e0, msg1);
+	msg3 = _mm_sha1msg1_epu32(msg3, msg0);
+	msg2 = _mm_xor_si128(msg2, msg0);
 	msg2 = _mm_sha1msg2_epu32(msg2, msg1);
-	msg3 = _mm_xor_si128(msg3, msg1);
 
 	// Rounds 68-71
-	e1   = abcd;
-	abcd = _mm_sha1rnds4_epu32(abcd, e0, 3);
-	e0   = _mm_sha1nexte_epu32(e0, msg2);
+	e1   = _mm_sha1nexte_epu32(e1, msg1);
+	e0   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e1, 3);
+	msg3 = _mm_xor_si128(msg3, msg1);
 	msg3 = _mm_sha1msg2_epu32(msg3, msg2);
 
 	// Rounds 72-75
+	e0   = _mm_sha1nexte_epu32(e0, msg2);
 	e1   = abcd;
 	abcd = _mm_sha1rnds4_epu32(abcd, e0, 3);
-	e0   = _mm_sha1nexte_epu32(e0, msg3);
 
 	// Rounds 76-79
-	e1   = abcd;
-	abcd = _mm_sha1rnds4_epu32(abcd, e0, 3);
+	e1   = _mm_sha1nexte_epu32(e1, msg3);
+	e0   = abcd;
+	abcd = _mm_sha1rnds4_epu32(abcd, e1, 3);
 
-	// Update state
+	// Combine with initial state
 	e0   = _mm_sha1nexte_epu32(e0, e_save);
 	abcd = _mm_add_epi32(abcd, abcd_save);
 
-	// Store back — reverse DCBA→ABCD
-	abcd = _mm_shuffle_epi32(abcd, 0x1B);
-	_mm_storeu_si128(reinterpret_cast<__m128i*>(&st[0]), abcd);
-	st[4] = _mm_extract_epi32(e0, 3);
+	// Store back: st = {E, D, C, B, A}
+	_mm_storeu_si128(reinterpret_cast<__m128i*>(&st[1]), abcd);
+	st[0] = static_cast<uint32_t>(_mm_extract_epi32(e0, 3));
 }
 
 // =====================================================================

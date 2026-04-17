@@ -14,9 +14,17 @@ if(NOT CMAKE_TOOLCHAIN_FILE AND WIN32)
     endif()
 endif()
 
+# Overlay ports (zlib-ng built with ZLIB_COMPAT=ON to provide zlib.h / ZLIB::ZLIB)
+if(NOT DEFINED VCPKG_OVERLAY_PORTS)
+    set(VCPKG_OVERLAY_PORTS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg-overlays")
+endif()
+
 project(CHDlite VERSION 0.2.0 LANGUAGES C CXX)
 
 set(BUILD_SHARED_LIBS OFF)
+
+# Use static CRT to match vcpkg x64-windows-static triplet (MT not MD)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -65,7 +73,7 @@ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
 endif()
 
 # Find external libraries
-find_package(zlib-ng CONFIG REQUIRED)
+find_package(ZLIB REQUIRED)
 find_package(zstd CONFIG REQUIRED)
 find_package(FLAC CONFIG REQUIRED)
 find_package(xxHash CONFIG REQUIRED)
@@ -158,7 +166,7 @@ endif()
 
 target_link_libraries(mame_chd_core
     PUBLIC
-        zlib-ng::zlib
+        ZLIB::ZLIB
         ${ZSTD_TARGET}
         FLAC::FLAC
         FLAC::FLAC++
@@ -315,6 +323,7 @@ add_executable(cli_test tests/cli_test.cpp)
 # CLI tool
 add_executable(chdlite_cli src/cli/chdlite_cli.cpp)
 target_link_libraries(chdlite_cli PRIVATE chdlite spdlog::spdlog)
+target_compile_definitions(chdlite_cli PRIVATE NOMINMAX)
 set_target_properties(chdlite_cli PROPERTIES OUTPUT_NAME chdlite)
 
 # Create chdread / chdhash / chdcomp aliases (symlinks on Unix, copies on Windows)

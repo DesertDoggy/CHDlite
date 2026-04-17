@@ -1466,16 +1466,11 @@ void cdrom_file::ecc_clear(uint8_t *sector)
 
 std::string cdrom_file::get_file_path(std::string &path)
 {
-	int pos = path.find_last_of('\\');
-	if (pos!=-1)
-	{
-		path = path.substr(0,pos+1);
-	}
+	int pos = path.find_last_of("/\\");
+	if (pos != -1)
+		path = path.substr(0, pos + 1);
 	else
-	{
-		pos = path.find_last_of('/');
-		path = path.substr(0,pos+1);
-	}
+		path.clear();
 	return path;
 }
 /*-------------------------------------------------

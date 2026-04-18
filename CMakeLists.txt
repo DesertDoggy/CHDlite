@@ -83,8 +83,56 @@ find_package(spdlog CONFIG REQUIRED)
 find_package(utf8proc CONFIG REQUIRED)
 
 # =====================================================================
-# LZMA SDK (embedded 3rdparty)
+# LZMA SDK (embedded 3rdparty) + optional x86-64 ASM decoder
 # =====================================================================
+
+# --- Detect LZMA ASM decoder availability (x86-64 Windows only) ------
+set(LZMA_ASM_ENABLED OFF)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|x86-64" AND WIN32)
+    set(LZMA_ASM_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/lzma/Asm/x86/LzmaDecOpt.asm")
+    if(EXISTS "${LZMA_ASM_SRC}")
+        # Try UASM first, then ml64
+        find_program(UASM_EXE NAMES uasm64 uasm HINTS "C:/uasm")
+        find_program(ML64_EXE NAMES ml64)
+        if(UASM_EXE)
+            set(LZMA_ASM_ASSEMBLER "${UASM_EXE}")
+            set(LZMA_ASM_FLAGS -win64 -DWINDOWS -10)
+            set(LZMA_ASM_ENABLED ON)
+            message(STATUS "LZMA ASM decoder: ENABLED (UASM: ${UASM_EXE})")
+        elseif(ML64_EXE)
+            set(LZMA_ASM_ASSEMBLER "${ML64_EXE}")
+            set(LZMA_ASM_FLAGS /nologo /c)
+            set(LZMA_ASM_ENABLED ON)
+            message(STATUS "LZMA ASM decoder: ENABLED (ml64: ${ML64_EXE})")
+        else()
+            message(STATUS "LZMA ASM decoder: DISABLED (no assembler found)")
+        endif()
+    else()
+        message(STATUS "LZMA ASM decoder: DISABLED (ASM source not found)")
+    endif()
+else()
+    message(STATUS "LZMA ASM decoder: DISABLED (not x86-64 Windows)")
+endif()
+
+# --- Assemble LzmaDecOpt.asm → .obj if assembler available ----------
+if(LZMA_ASM_ENABLED)
+    set(LZMA_ASM_OBJ "${CMAKE_CURRENT_BINARY_DIR}/LzmaDecOpt.obj")
+    set(LZMA_ASM_INC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/lzma/Asm/x86")
+    add_custom_command(
+        OUTPUT "${LZMA_ASM_OBJ}"
+        COMMAND "${LZMA_ASM_ASSEMBLER}" ${LZMA_ASM_FLAGS}
+                "-I${LZMA_ASM_INC_DIR}"
+                "-Fo${LZMA_ASM_OBJ}"
+                "${LZMA_ASM_SRC}"
+        DEPENDS "${LZMA_ASM_SRC}"
+                "${LZMA_ASM_INC_DIR}/7zAsm.asm"
+        COMMENT "Assembling LzmaDecOpt.asm (x86-64 LZMA decoder)"
+        VERBATIM
+    )
+    add_custom_target(lzma_asm_obj DEPENDS "${LZMA_ASM_OBJ}")
+endif()
+
+# --- LZMA SDK static library ----------------------------------------
 add_library(lzma_sdk STATIC
     src/3rdparty/lzma/C/LzmaDec.c
     src/3rdparty/lzma/C/LzmaEnc.c
@@ -96,6 +144,16 @@ target_include_directories(lzma_sdk
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/lzma/C>
 )
 target_compile_definitions(lzma_sdk PRIVATE _7ZIP_ST Z7_ST)   # single-threaded LZMA
+
+if(LZMA_ASM_ENABLED)
+    # Tell LzmaDec.c to use the external ASM function instead of the C fallback
+    target_compile_definitions(lzma_sdk PRIVATE Z7_LZMA_DEC_OPT)
+    add_dependencies(lzma_sdk lzma_asm_obj)
+    # Link the assembled object file into lzma_sdk
+    target_link_libraries(lzma_sdk PRIVATE "${LZMA_ASM_OBJ}")
+    target_link_options(lzma_sdk PUBLIC "LINKER:--allow-multiple-definition")
+endif()
+
 set_target_properties(lzma_sdk PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # =====================================================================

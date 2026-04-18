@@ -385,19 +385,34 @@ ExtractionResult ChdExtractor::extract_impl(const std::string& chd_path,
     {
         bool gdi_mode;
         std::string meta_ext;
+        std::string meta_filename_base; // stem to use for the metadata filename
         if (!options.output_filename.empty())
         {
             meta_ext = path_ext(options.output_filename);
-            gdi_mode = (meta_ext == ".gdi");
+            // Only accept .cue / .gdi as valid CD metadata extensions.
+            // If anything else (e.g. ".iso", "") is given, fall back to auto-detection.
+            if (meta_ext != ".cue" && meta_ext != ".gdi")
+            {
+                // Strip whatever extension was given and auto-detect
+                meta_ext = {};
+            }
+            gdi_mode = (meta_ext == ".gdi") || (meta_ext.empty() && is_gdrom && !options.force_bin_cue);
+            if (meta_ext.empty())
+                meta_ext = gdi_mode ? ".gdi" : ".cue";
+            // Build new filename with corrected extension
+            std::string base = options.output_filename;
+            auto dot = base.find_last_of('.');
+            if (dot != std::string::npos) base = base.substr(0, dot);
+            meta_filename_base = base + meta_ext;
         }
         else
         {
             gdi_mode = is_gdrom && !options.force_bin_cue;
             meta_ext = gdi_mode ? ".gdi" : ".cue";
+            meta_filename_base = stem + meta_ext;
         }
 
-        std::string meta_filename = options.output_filename.empty()
-            ? (stem + meta_ext) : options.output_filename;
+        std::string meta_filename = meta_filename_base;
         std::string meta_path = path_join(out_dir, meta_filename);
 
         // GDI and GD-ROM CUE always force split

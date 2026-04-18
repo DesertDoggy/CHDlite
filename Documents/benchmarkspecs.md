@@ -1,14 +1,15 @@
 # CHDlite Benchmark Tool Specification
 
 ## Overview
-A comprehensive benchmarking tool for CHDlite compression performance analysis. Tests compression/decompression across codec combinations with configurable parallelization, supporting both config file and CLI modes.
+A comprehensive benchmarking tool for CHDlite and CHDman compression performance analysis. Tests compression/decompression across codec combinations with configurable parallelization, supporting both config file and CLI modes. Compare CHDlite vs CHDman baseline for performance benchmarking.
 
 ## Architecture
 
 ### Execution Model
 - **Benchmark execution**: Sequential (one file → one codec combo → measure)
-- **Internal compression**: Uses CHDlite's parallelization (configurable via `num_processors`)
-- **Comparison scenarios**: Test with `num_processors=1` (single-threaded, like chdman) vs `num_processors=0` (auto/all cores) to measure speedup
+- **Tool selection**: Test CHDlite and/or CHDman based on config (benchmark_chdlite, benchmark_chdman flags)
+- **Internal compression**: Uses executable's parallelization (configurable via `num_processors`)
+- **Comparison scenarios**: Test with `num_processors=1` (single-threaded baseline) vs `num_processors=0` (auto/all cores) to measure speedup and compare tools
 
 ### Configuration Priority
 1. CLI arguments (highest priority, overrides config)
@@ -29,26 +30,42 @@ auto_detect_format = true
 - `platform_skip`: Comma-separated platform names to skip (PS2, Dreamcast, PSP, Saturn, PCEngine)
 - `auto_detect_format`: Boolean, auto-detect input file format (CUE/GDI/ISO) from extension+header magic
 
+### [tools]
+```ini
+chdman_path = /usr/local/bin/chdman
+cdhplite_path = ${basedir}/Release/bin/cdhplite.exe
+```
+- `chdman_path`: Path to CHDman executable (leave empty to skip chdman benchmarks)
+- `cdhplite_path`: Path to CHDlite executable (leave empty to use PATH or default)
+
 ### [codecs]
 ```ini
-list = 1
-3
-1,5
-4
-9,10,11,12
+list = chdman_best_cd
+cdhplite_default_cd
+10,12
+11
 ```
-- List of codec combinations (one per line, comma-separated IDs)
-- Codec ID mapping:
-  - 0 = None (no compression)
-  - 1 = Zlib
-  - 2 = ZlibPlus
-  - 3 = Zstd
-  - 4 = LZMA
-  - 5 = FLAC
-  - 9 = CD_Zlib
-  - 10 = CD_Zstd
-  - 11 = CD_LZMA
-  - 12 = CD_FLAC
+- List of codec combinations: preset names or custom codec lines (one per line)
+- **Codec ID Mapping** (organized by type):
+  - **Generic Codecs** (DVD/ISO/Raw):
+    - 1 = Zlib
+    - 2 = ZlibPlus (legacy)
+    - 3 = Zstd
+    - 4 = LZMA
+    - 5 = FLAC
+    - 6 = Huffman
+  - **CD/GD-ROM Compound Codecs** (data + subcode):
+    - 9 = CD_Zlib
+    - 10 = CD_Zstd
+    - 11 = CD_LZMA
+    - 12 = CD_FLAC
+- **Preset Combinations**:
+  - `chdman_best_cd` = [11,10,9,12] = cdlz+cdzs+cdzl+cdfl (all CD compound codecs)
+  - `chdman_best_dvd` = [3,4,1,6] = zstd+lzma+zlib+huff (all DVD generic codecs)
+  - `chdlite_default_cd` = [10,12] = CHDlite default for CD (cdzs+cdfl, fast)
+  - `chdlite_default_dvd` = [3] = CHDlite default for DVD (zstd, balanced)
+  - `individual_cd` = [11],[10],[9],[12] = Test each CD codec separately
+  - `individual_dvd` = [1],[3],[4],[6] = Test each DVD codec separately
 
 ### [benchmark]
 ```ini
@@ -63,6 +80,14 @@ keep_last_output = false
 - `verify_integrity`: Boolean, verify decompressed data matches original via SHA1
 - `output_root`: Output directory for results
 - `keep_last_output`: Boolean, keep previous results or overwrite
+
+### [benchmark_selection]
+```ini
+benchmark_cdhplite = true
+benchmark_chdman = false
+```
+- `benchmark_cdhplite`: Boolean, enable CHDlite benchmarking
+- `benchmark_chdman`: Boolean, enable CHDman benchmarking (requires chdman_path)
 
 ### [output]
 ```ini
@@ -79,10 +104,16 @@ output_log = true
 benchmark_chd benchmark.conf
 
 # CLI override mode (overrides config file)
-benchmark_chd --config benchmark.conf --input /path/to/roms --codecs 1,4 --reps 3 --processors 1
+benchmark_chd --config benchmark.conf --input /path/to/roms --codecs cdhplite_default_cd --reps 3 --processors 1
 
 # CLI-only (no config file needed)
-benchmark_chd --input /path --codecs 1,3,4 --reps 5 --output ./results
+benchmark_chd --input /path --codecs 10,12 --reps 5 --output ./results
+
+# Compare CHDlite vs CHDman baseline
+benchmark_chd --cdhplite-path /usr/bin/cdhplite --chdman-path /usr/bin/chdman --benchmark-cdhplite --benchmark-chdman --codecs chdman_best_cd --reps 3
+
+# Single-threaded baseline
+benchmark_chd --input /path --codecs 10,12 --reps 5 --processors 1
 
 # Help
 benchmark_chd --help
@@ -91,12 +122,16 @@ benchmark_chd --help
 ### CLI Arguments
 - `--config FILE`: Config file path (default: benchmark.conf)
 - `--input PATH`: Input directory (can repeat)
-- `--codecs LIST`: Codec combinations as comma-separated: `1,4` or `1 3 1,5` (space=new combo)
+- `--codecs LIST`: Codec presets or combos: `chdman_best_cd` or `10,12 1 3` (space=new combo)
 - `--reps N`: Number of repetitions
 - `--processors N`: Number of processors (0=auto, 1=single-threaded, N=specific)
 - `--output DIR`: Output directory
 - `--verify`: Enable integrity verification
 - `--formats FORMAT`: Output formats (text, csv, json)
+- `--chdman-path PATH`: Path to CHDman executable
+- `--cdhplite-path PATH`: Path to CHDlite executable
+- `--benchmark-cdhplite`: Benchmark CHDlite
+- `--benchmark-chdman`: Benchmark CHDman
 - `--help`: Show help message
 
 ## Startup Prompt
@@ -234,12 +269,18 @@ rom1.cue,Zlib,12345678,5432100,44.05,1198.32,10.55,580.01,21.38,256500000,3
 ### Timing Precision
 - Use `std::chrono::high_resolution_clock`
 - Results in milliseconds (convert to seconds as needed)
-- Warmup run before timing (optional, improves cache warmth)
+- Warmup call to get_peak_memory() before timing (improves cache warmth)
+
+### Tool Invocation
+- **CHDlite**: Use chdlite_api.hpp (ChdArchiver::archive(), ChdReader)
+- **CHDman**: Spawn subprocess with appropriate arguments, capture timing from execution
+- **Codec mapping**: Convert preset names to ID lists in benchmark code
 
 ### Verification
 - If enabled: Read all hunks from decompressed CHD
 - Compute SHA1 of decompressed data
 - Compare with original file SHA1
+- Report verification result in output (pass/fail flag)
 
 ## Error Handling
 - Skip corrupted/unreadable input files (log warning)
@@ -247,6 +288,8 @@ rom1.cue,Zlib,12345678,5432100,44.05,1198.32,10.55,580.01,21.38,256500000,3
 - Report skipped platforms in final summary
 - Validate codec IDs (warn on invalid)
 - Validate config file syntax (abort on parse error)
+- Check chdman_path exists before attempting benchmark_chdman
+- Log tool invocation failures (CHDman subprocess errors)
 
 ## Performance Considerations
 - Sequential file processing (no inter-file parallelism)

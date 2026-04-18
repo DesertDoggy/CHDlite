@@ -1,0 +1,230 @@
+; CHDlite Benchmark Configuration Template
+; ========================================
+;
+; This file configures the benchmark_chd tool behavior.
+; Use ${basedir} to reference the directory containing this config file.
+; Paths support forward slashes (/) and will be normalized for your OS.
+
+; =====================================================================
+; INPUT SOURCES
+; =====================================================================
+[input]
+
+; Input directories (semicolon-separated)
+; Supports ${basedir} for config directory, ~ for home directory
+; Example: ${basedir}/test_roms; ~/Games/PSX; /mnt/external/chds
+paths = ${basedir}/test/files
+
+; Recursively walk subdirectories (true/false)
+recursive = true
+
+; Skip specific platforms (comma-separated, case-insensitive)
+; Valid: PS2, Dreamcast, PSP, Saturn, PCEngine
+; Leave empty to include all
+platform_skip =
+
+; Auto-detect input format from file extension + header magic bytes (true/false)
+; false = use input_format config below
+auto_detect_format = true
+
+; =====================================================================
+; EXECUTABLE PATHS FOR COMPARISON BENCHMARKS
+; =====================================================================
+[tools]
+
+; Path to CHDman executable (for comparison baseline)
+; Leave empty to skip chdman benchmarking
+; Example: C:/chdman/chdman.exe or /usr/local/bin/chdman
+chdman_path =
+
+; Path to CHDlite executable (if not in system PATH)
+; Leave empty to use chdlite from PATH or Release/bin/chdlite.exe
+; Example: ${basedir}/Release/bin/chdlite.exe
+chdlite_path = ${basedir}/Release/bin/chdlite.exe
+
+; =====================================================================
+; CODEC COMBINATIONS TO TEST
+; =====================================================================
+[codecs]
+
+; Codec ID Mapping:
+; ----------------------------------------------------------------
+; GENERIC CODECS (for DVD/ISO/Raw):
+;   1  = Zlib
+;   2  = ZlibPlus (legacy V3/V4, not recommended)
+;   3  = Zstd (fast decompression, good compression)
+;   4  = LZMA (best compression, slower decompression)
+;   5  = FLAC (lossless audio, slow but high ratio)
+;   6  = Huffman (self-contained, no external lib)
+;
+; CD/GD-ROM COMPOUND CODECS (data + subcode):
+;   9  = CD_Zlib (CD Zlib, legacy, slow)
+;  10  = CD_Zstd (CD Zstd, fast data, excellent ratio)
+;  11  = CD_LZMA (CD LZMA, best ratio, slower)
+;  12  = CD_FLAC (CD FLAC, lossless audio)
+;
+; PRESET COMBINATIONS (use by name):
+; "chdman_best_cd"     = [11,10,9,12]  = cdlz+cdzs+cdzl+cdfl (all CD compound codecs)
+; "chdman_best_dvd"    = [3,4,1,6]     = zstd+lzma+zlib+huff (all DVD generic codecs)
+; "chdlite_default_cd" = [10,12]       = CHDlite default for CD (cdzs+cdfl, fast)
+; "chdlite_default_dvd"= [3]           = CHDlite default for DVD (Zstd, balanced)
+; "individual_cd"      = [11],[10],[9],[12] = Test each CD codec separately
+; "individual_dvd"     = [1],[3],[4],[6]    = Test each DVD codec separately
+;
+; Custom combinations (one per line, comma-separated codec IDs):
+; Each line = one independent benchmark run with codec combo
+;
+; EXAMPLES:
+;   chdman_best_cd         = benchmark all CD compound codecs (chdman --best)
+;   chdlite_default_cd     = benchmark CHDlite CD defaults (Zstd+FLAC)
+;   10,12                  = CD_Zstd + CD_FLAC
+;   3                      = Zstd alone (DVD)
+;   1,5                    = Zlib + FLAC (Zlib data + FLAC audio)
+
+; List format: preset names and/or custom codec lines (one per line)
+list = chdman_best_cd
+chdman_best_dvd
+chdlite_default_cd
+chdlite_default_dvd
+individual_cd
+individual_dvd
+
+; =====================================================================
+; BENCHMARK EXECUTION PARAMETERS
+; =====================================================================
+[benchmark]
+
+; Number of repetitions per file + codec combo (int >= 1)
+; Multiple reps improve statistical accuracy (mean ± stddev)
+; Recommendation: 1 for quick testing, 3-5 for production benchmarks
+repetitions = 1
+
+; Number of processors for compression (int)
+; 0     = auto-detect (use all available cores)
+; 1     = single-threaded (compare with chdman baseline)
+; N > 1 = specific core count (e.g., 4 for quad-core)
+; Use parallel vs single-threaded to measure speedup
+num_processors = 0
+
+; Verify decompression integrity (true/false)
+; When true: read all hunks from compressed CHD, compute SHA1
+; When false: skip verification (faster but less assurance)
+verify_integrity = true
+
+; Output directory for benchmark results (supports ${basedir}, ~)
+; Will be created if it doesn't exist
+; Results: benchmark_report.txt, benchmark_report.csv, benchmark_report.json
+output_root = ${basedir}/benchmark_results
+
+; Keep previous benchmark output (true/false)
+; true  = append to existing reports (results in subdir by timestamp)
+; false = overwrite previous results
+keep_last_output = false
+
+; =====================================================================
+; BENCHMARK TOOL SELECTION
+; =====================================================================
+[benchmark_selection]
+
+; Benchmark CHDlite (true/false)
+; When true: test CHDlite with configured codec combinations
+benchmark_chdlite = true
+
+; Benchmark CHDman (true/false)
+; When true: test CHDman as baseline for comparison
+; Requires chdman_path to be set in [tools] section
+benchmark_chdman = false
+
+; =====================================================================
+; OUTPUT FORMATS AND LOGGING
+; =====================================================================
+[output]
+
+; Output formats to generate (comma-separated)
+; Valid: text, csv, json
+; text = human-readable report with sections per file+codec
+; csv  = machine-readable for Excel/analysis
+; json = structured format for programmatic parsing
+output_formats = text,csv,json
+
+; Enable detailed logging to console (true/false)
+; true  = show progress and detailed messages
+; false = minimal output (errors only)
+output_log = true
+
+; =====================================================================
+; QUICK REFERENCE: CLI OVERRIDE MODE
+; =====================================================================
+;
+; You can override config file settings via command line:
+;
+;   # Use config file
+;   benchmark_chd benchmark.conf
+;
+;   # Override specific settings
+;   benchmark_chd --config benchmark.conf --input /path/to/roms --codecs 1,4 --reps 5
+;
+;   # Single-threaded benchmark (compare vs parallel)
+;   benchmark_chd --input /path --codecs 4 --reps 3 --processors 1
+;
+;   # Fast test (no verification)
+;   benchmark_chd --input /path --codecs 1 --reps 1 --output ./quick_results
+;
+; Available CLI Arguments:
+;   --config FILE              Config file path
+;   --input PATH               Input directory (repeatable)
+;   --codecs LIST              Codec presets/combos: "chdman_best_cd" or "10,12 1 3"
+;   --reps N                   Number of repetitions
+;   --processors N             Processor count (0=auto, 1=single, N=specific)
+;   --output DIR               Output directory
+;   --verify                   Enable integrity verification
+;   --formats FORMAT           Output formats (text,csv,json)
+;   --chdman-path PATH         Path to chdman executable
+;   --chdlite-path PATH        Path to chdlite executable
+;   --benchmark-chdman         Benchmark CHDman
+;   --benchmark-chdlite        Benchmark CHDlite
+;   --help                     Show help message
+
+; =====================================================================
+; EXAMPLE WORKFLOWS
+; =====================================================================
+;
+; Scenario 1: Quick CHDlite test (fast defaults)
+;   [codecs]
+;   list = chdlite_default_cd
+;          chdlite_default_dvd
+;   [benchmark]
+;   repetitions = 1
+;   num_processors = 0
+;
+; Scenario 2: CHDlite vs CHDman baseline comparison
+;   [tools]
+;   chdman_path = /usr/local/bin/chdman
+;   chdlite_path = ${basedir}/Release/bin/chdlite.exe
+;   [codecs]
+;   list = chdman_best_cd
+;   [benchmark_selection]
+;   benchmark_chdlite = true
+;   benchmark_chdman = true
+;   [benchmark]
+;   repetitions = 3
+;   num_processors = 1
+;
+; Scenario 3: Individual codec testing (CD)
+;   [codecs]
+;   list = 11
+;          10
+;          9
+;          12
+;   [benchmark]
+;   repetitions = 5
+;   num_processors = 0
+;
+; Scenario 4: Custom codec mixes (multi-codec hunks)
+;   [codecs]
+;   list = 10,12
+;          11,12
+;          10,11,12
+;   [benchmark]
+;   repetitions = 3
+;   num_processors = 4

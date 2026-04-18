@@ -431,7 +431,7 @@ static void print_usage()
         "  --log-dir <path>            Directory for chdlite.log  (default: <exe>/logs/)\n"
         "  --result <format>           Pretty log output: on|off (read/hash default: on; extract/create default: off)\n"
         "                              Formats: text, json, lot, svg, etc. (for hash output)\n"
-        "  --best                      Maximum compression (zstd+lzma+zlib / flac)\n"
+        "  --best                      Maximum compression (cdlz+cdzs+cdzl+cdfl for CD, zstd+lzma+zlib+huff for DVD)\n"
         "  --fix                       Verify: fix SHA1 mismatch by updating header\n"
         "  -t, --tag <tag>             Dumpmeta: 4-char metadata tag (e.g. CHTR, DVD )\n"
         "  -ix, --index <n>            Dumpmeta: metadata index (default: 0)\n"
@@ -1152,7 +1152,7 @@ static int cmd_create(const Args& args)
     if (opts.has_custom_compression())
         std::printf("Compression:  %s\n", codec_list_string(opts.compression).c_str());
     else if (opts.best)
-        std::printf("Compression:  best (zstd+lzma+zlib / flac)\n");
+        std::printf("Compression:  best (cdlz+cdzs+cdzl+cdfl for CD, zstd+lzma+zlib+huff for DVD)\n");
     else
         std::printf("Compression:  auto (smart defaults)\n");
     if (opts.hunk_bytes)

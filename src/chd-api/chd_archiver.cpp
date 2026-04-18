@@ -139,11 +139,13 @@ static const chd_codec_type s_smart_cd_compression[4] =
     { CHD_CODEC_CD_ZSTD, CHD_CODEC_CD_FLAC, CHD_CODEC_NONE, CHD_CODEC_NONE };
 
 // --best: maximum compression ratio (slower compress + decompress)
+// DVD: zstd, lzma, zlib, huff — all 4 slots filled for best ratio
 static const chd_codec_type s_best_dvd_compression[4] =
-    { CHD_CODEC_ZSTD, CHD_CODEC_LZMA, CHD_CODEC_ZLIB, CHD_CODEC_NONE };
+    { CHD_CODEC_ZSTD, CHD_CODEC_LZMA, CHD_CODEC_ZLIB, CHD_CODEC_HUFFMAN };
 
+// CD: cdlz, cdzs, cdzl, cdfl — all 4 compound codecs for best ratio
 static const chd_codec_type s_best_cd_compression[4] =
-    { CHD_CODEC_CD_ZSTD, CHD_CODEC_CD_LZMA, CHD_CODEC_CD_ZLIB, CHD_CODEC_CD_FLAC };
+    { CHD_CODEC_CD_LZMA, CHD_CODEC_CD_ZSTD, CHD_CODEC_CD_ZLIB, CHD_CODEC_CD_FLAC };
 
 // Pick the best default compression array based on detected system and content format.
 // Returns null if no smart default applies (caller falls back to chdman legacy defaults).

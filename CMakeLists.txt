@@ -378,6 +378,9 @@ target_link_libraries(cue_style_test PRIVATE chdlite)
 add_executable(cli_test tests/cli_test.cpp)
 # cli_test only uses std::system() to invoke the CLI binary, no library link needed
 
+add_executable(benchmark_chd tests/benchmark_chd.cpp)
+target_link_libraries(benchmark_chd PRIVATE chdlite)
+
 # CLI tool
 add_executable(chdlite_cli src/cli/chdlite_cli.cpp)
 target_link_libraries(chdlite_cli PRIVATE chdlite spdlog::spdlog)

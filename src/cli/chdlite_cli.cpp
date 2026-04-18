@@ -1110,6 +1110,10 @@ static int cmd_create(const Args& args)
             std::fprintf(stderr, "Error: uncompressed CHD (-c none) is not yet supported\n");
             return 1;
         }
+        else if (args.compression == "chdman")
+        {
+            opts.chdman_compat = true;
+        }
         else
         {
             // Parse comma-separated codec list
@@ -1247,6 +1251,10 @@ static int cmd_create_typed(const Args& args, const char* type_hint)
         {
             std::fprintf(stderr, "Error: uncompressed CHD (-c none) is not yet supported\n");
             return 1;
+        }
+        else if (args.compression == "chdman")
+        {
+            opts.chdman_compat = true;
         }
         else
         {
@@ -1538,6 +1546,11 @@ static int cmd_copy(const Args& args)
             std::fprintf(stderr, "Error: uncompressed CHD (-c none) is not yet supported\n");
             return 1;
         }
+        else if (args.compression == "chdman")
+        {
+            opts.chdman_compat = true;
+        }
+        else {
         std::string s = args.compression;
         int slot = 0;
         size_t pos = 0;
@@ -1551,6 +1564,7 @@ static int cmd_copy(const Args& args)
             for (auto& c : tok) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             opts.compression[slot++] = parse_codec(tok);
             pos = (comma == std::string::npos) ? s.size() : comma + 1;
+        }
         }
     }
 

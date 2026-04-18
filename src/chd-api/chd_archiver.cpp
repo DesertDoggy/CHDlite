@@ -736,7 +736,7 @@ ArchiveResult ChdArchiver::archive(const std::string& input_path,
         const chd_codec_type* chosen = nullptr;
         if (options.best)
             chosen = best_compression_for(smart_fmt);
-        else
+        else if (!options.chdman_compat)
             chosen = smart_compression_for(detection.game_platform, smart_fmt);
         if (chosen) {
             // Convert mame codec types back to our Codec enum for the effective options

@@ -24,9 +24,6 @@
     #include <unistd.h>
 #endif
 
-// Access the OSD thread count (defined in osdsync.cpp, same as CLI does)
-extern int osd_num_processors;
-
 namespace fs = std::filesystem;
 using namespace chdlite;
 using namespace std::chrono;
@@ -114,11 +111,12 @@ struct CodecPreset {
 };
 
 std::map<std::string, CodecPreset> g_codec_presets = {
-    {"best",      {"best",      {11, 10, 9, 12}, {3, 4, 1, 6}}},
-    {"lzma",      {"lzma",      {11},            {4}}},
-    {"zlib",      {"zlib",      {9},             {1}}},
-    {"flac_huff", {"flac_huff", {12},            {6}}},
-    {"zstd",      {"zstd",      {10},            {3}}},
+    {"best",          {"best",          {11, 10, 9, 12}, {3, 4, 1, 6}}},
+    {"chdman_default",{"chdman_default",{11, 9, 12},     {4, 1, 6, 5}}},
+    {"lzma",          {"lzma",          {11},            {4}}},
+    {"zlib",          {"zlib",          {9},             {1}}},
+    {"flac_huff",     {"flac_huff",     {12},            {6}}},
+    {"zstd",          {"zstd",          {10},            {3}}},
 };
 
 // Resolve a preset name to actual codec IDs based on whether input is CD or DVD
@@ -491,7 +489,7 @@ std::string quote(const std::string& s) {
     return "\"" + s + "\"";
 }
 
-// ---- CHDlite benchmark (uses library directly) ----
+// ---- CHDlite benchmark (shells out to chdlite.exe for fair comparison) ----
 TimingResult run_benchmark_chdlite(const std::string& input_file, 
                           const std::vector<int>& codec_combo,
                           const BenchmarkConfig& config) {
@@ -501,88 +499,68 @@ TimingResult run_benchmark_chdlite(const std::string& input_file,
     result.codec_combo = codec_combo;
     result.format = detect_format(input_file);
 
-    fs::path temp_output = config.output_root / "temp_chdlite.chd";
+    fs::path temp_chd = config.output_root / "temp_chdlite.chd";
+    fs::path temp_extract = config.output_root / "temp_chdlite_extract";
     fs::create_directories(config.output_root);
 
-    ChdArchiver archiver;
-    ArchiveOptions opts;
+    // Clean up any leftover temp files
+    if (fs::exists(temp_chd)) fs::remove(temp_chd);
 
-    // Enforce thread count so chdlite matches chdman -np
-    opts.num_processors = config.num_processors;
-    if (config.num_processors > 0)
-        osd_num_processors = config.num_processors;
-
-    // Convert codec combination to compression array
-    for (size_t i = 0; i < codec_combo.size() && i < 4; ++i) {
-        int codec_id = codec_combo[i];
-        if (g_codec_map.count(codec_id)) {
-            opts.compression[i] = g_codec_map[codec_id].codec;
-        }
-    }
+    bool cd_mode = is_cd_format(result.format);
+    std::string codec_str = build_chdman_codec_string(codec_combo);
+    std::string np_str = std::to_string(config.num_processors == 0 ? 0 : config.num_processors);
 
     try {
         result.original_size = get_input_size(input_file);
 
-        get_peak_memory(); // Warmup
-
-        // In-place progress: overwrite same line with compress %
-        int last_pct = -1;
-        opts.progress_callback = [&last_pct](uint64_t done, uint64_t total) -> bool {
-            int pct = total > 0 ? static_cast<int>(100 * done / total) : 0;
-            if (pct != last_pct) {
-                last_pct = pct;
-                std::cout << "\r  [chdlite] compressing... " << pct << "%   ";
-                std::cout.flush();
-            }
-            return true;
-        };
+        // === Compression phase ===
+        // chdlite create input -o output.chd -c codecs -np N
+        std::string create_cmd = quote(config.chdlite_path.string()) +
+            " create " + quote(input_file) +
+            " -o " + quote(temp_chd.string()) +
+            " -c " + codec_str;
+        if (config.num_processors > 0) {
+            create_cmd += " -np " + np_str;
+        }
 
         auto comp_start = high_resolution_clock::now();
-        ArchiveResult comp_result = archiver.archive(input_file, temp_output.string(), opts);
+        int comp_exit = run_process(create_cmd);
         auto comp_end = high_resolution_clock::now();
 
-        // Clear the progress line
-        std::cout << "\r" << std::string(60, ' ') << "\r";
-        std::cout.flush();
-
-        if (!comp_result.success) {
-            std::cerr << "Compression failed: " << input_file << std::endl;
-            if (fs::exists(temp_output)) fs::remove(temp_output);
+        if (comp_exit != 0 || !fs::exists(temp_chd)) {
+            std::cerr << "chdlite compression failed (exit=" << comp_exit << "): " << input_file << std::endl;
+            if (fs::exists(temp_chd)) fs::remove(temp_chd);
             return result;
         }
 
         result.compression_time_ms = duration<double, std::milli>(comp_end - comp_start).count();
-        result.peak_memory_bytes = get_peak_memory();
-        result.compressed_size = fs::file_size(temp_output);
+        result.compressed_size = fs::file_size(temp_chd);
         result.compression_ratio = 100.0 * result.compressed_size / result.original_size;
         result.compression_speed_mbps = (result.original_size / (1024.0 * 1024.0)) / (result.compression_time_ms / 1000.0);
+        result.peak_memory_bytes = get_peak_memory(); // approximation
 
-        // Decompression phase: extract to disk (same as chdman extractcd/extractdvd)
+        // === Decompression phase ===
         {
-            fs::path temp_extract = config.output_root / "temp_chdlite_extract";
             if (fs::exists(temp_extract)) fs::remove_all(temp_extract);
             fs::create_directories(temp_extract);
 
-            try {
-                ChdExtractor extractor;
-                ExtractOptions ext_opts;
-                ext_opts.output_dir = temp_extract.string();
-                ext_opts.force_overwrite = true;
+            // chdlite extract input.chd -o output_dir
+            std::string extract_cmd = quote(config.chdlite_path.string()) +
+                " extract " + quote(temp_chd.string()) +
+                " -o " + quote(temp_extract.string());
 
-                auto decomp_start = high_resolution_clock::now();
-                ExtractionResult ext_result = extractor.extract(temp_output.string(), ext_opts);
-                auto decomp_end = high_resolution_clock::now();
+            auto decomp_start = high_resolution_clock::now();
+            int decomp_exit = run_process(extract_cmd);
+            auto decomp_end = high_resolution_clock::now();
 
-                if (ext_result.success) {
-                    result.decompression_time_ms = duration<double, std::milli>(decomp_end - decomp_start).count();
-                    result.decompression_speed_mbps = (result.original_size / (1024.0 * 1024.0)) / (result.decompression_time_ms / 1000.0);
-                } else {
-                    std::cerr << "chdlite decompression (extract) failed" << std::endl;
-                }
-            } catch (const std::exception& e) {
-                std::cerr << "Error during chdlite extraction: " << e.what() << std::endl;
+            if (decomp_exit == 0) {
+                result.decompression_time_ms = duration<double, std::milli>(decomp_end - decomp_start).count();
+                result.decompression_speed_mbps = (result.original_size / (1024.0 * 1024.0)) / (result.decompression_time_ms / 1000.0);
+            } else {
+                std::cerr << "chdlite decompression failed (exit=" << decomp_exit << ")" << std::endl;
             }
 
+            // Clean up extract temp
             if (fs::exists(temp_extract)) fs::remove_all(temp_extract);
         }
 
@@ -590,8 +568,8 @@ TimingResult run_benchmark_chdlite(const std::string& input_file,
         std::cerr << "Benchmark exception: " << e.what() << std::endl;
     }
 
-    if (fs::exists(temp_output)) {
-        fs::remove(temp_output);
+    if (fs::exists(temp_chd)) {
+        fs::remove(temp_chd);
     }
 
     return result;
@@ -656,8 +634,8 @@ TimingResult run_benchmark_chdman(const std::string& input_file,
         result.compression_speed_mbps = (result.original_size / (1024.0 * 1024.0)) / (result.compression_time_ms / 1000.0);
         result.peak_memory_bytes = get_peak_memory(); // approximation
 
-        // === Decompression phase ===
-        if (config.verify_integrity) {
+        // === Decompression phase (always run for fairness with chdlite) ===
+        {
             // Clean up extract temp dir
             if (fs::exists(temp_extract)) fs::remove_all(temp_extract);
             fs::create_directories(temp_extract);
@@ -687,7 +665,7 @@ TimingResult run_benchmark_chdman(const std::string& input_file,
 
             if (decomp_exit == 0) {
                 result.decompression_time_ms = duration<double, std::milli>(decomp_end - decomp_start).count();
-                result.decompression_speed_mbps = (result.compressed_size / (1024.0 * 1024.0)) / (result.decompression_time_ms / 1000.0);
+                result.decompression_speed_mbps = (result.original_size / (1024.0 * 1024.0)) / (result.decompression_time_ms / 1000.0);
             } else {
                 std::cerr << "chdman decompression failed (exit=" << decomp_exit << ")" << std::endl;
             }

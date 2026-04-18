@@ -19,6 +19,7 @@
 - Multi-file batch thread budget
 - Proper CUE sheet parsing for all disc formats
 - Tests: 106 PASS / 1 FAIL
+- Thread Distribution Optimized on multicodec trys. (Fixed issue where multicodec was slower than chdman. One codec per thread, distribution by codec complexity)
 
 ### Logging and Error Handling
 - Dual-log system: Structured `error.log` (pipe-delimited) + command-specific pretty logs (`chdread.log`, `chdhash.log`, etc.)

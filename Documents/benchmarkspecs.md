@@ -32,61 +32,60 @@ auto_detect_format = true
 
 ### [tools]
 ```ini
-chdman_path = /usr/local/bin/chdman
-cdhplite_path = ${basedir}/Release/bin/cdhplite.exe
+chdman_path = ${basedir}/bin/chdman.exe
+chdlite_path = ${basedir}/bin/chdlite.exe
 ```
 - `chdman_path`: Path to CHDman executable (leave empty to skip chdman benchmarks)
-- `cdhplite_path`: Path to CHDlite executable (leave empty to use PATH or default)
+- `chdlite_path`: Path to CHDlite executable (leave empty to use PATH or default)
 
 ### [codecs]
 ```ini
-list = chdman_best_cd
-cdhplite_default_cd
-10,12
-11
+list = chdman_default
+lzma
+zlib
+flac_huff
+zstd
 ```
 - List of codec combinations: preset names or custom codec lines (one per line)
 - **Codec ID Mapping** (organized by type):
   - **Generic Codecs** (DVD/ISO/Raw):
     - 1 = Zlib
-    - 2 = ZlibPlus (legacy)
-    - 3 = Zstd
-    - 4 = LZMA
-    - 5 = FLAC
-    - 6 = Huffman
+    - 3 = Zstd (fast decompression, good compression)
+    - 4 = LZMA (best compression, slower decompression)
+    - 6 = Huffman (self-contained, no external lib)
   - **CD/GD-ROM Compound Codecs** (data + subcode):
     - 9 = CD_Zlib
-    - 10 = CD_Zstd
-    - 11 = CD_LZMA
-    - 12 = CD_FLAC
-- **Preset Combinations**:
-  - `chdman_best_cd` = [11,10,9,12] = cdlz+cdzs+cdzl+cdfl (all CD compound codecs)
-  - `chdman_best_dvd` = [3,4,1,6] = zstd+lzma+zlib+huff (all DVD generic codecs)
-  - `chdlite_default_cd` = [10,12] = CHDlite default for CD (cdzs+cdfl, fast)
-  - `chdlite_default_dvd` = [3] = CHDlite default for DVD (zstd, balanced)
-  - `individual_cd` = [11],[10],[9],[12] = Test each CD codec separately
-  - `individual_dvd` = [1],[3],[4],[6] = Test each DVD codec separately
+    - 10 = CD_Zstd (CD Zstd, fast data, excellent ratio)
+    - 11 = CD_LZMA (CD LZMA, best ratio, slower)
+    - 12 = CD_FLAC (CD FLAC, lossless audio)
+- **Format-Agnostic Presets** (binary auto-selects CD or DVD codecs based on input):
+  - `best`  = CD: cdlz+cdzs+cdzl+cdfl | DVD: zstd+lzma+zlib+huff
+  - `chdman_default` = CD: cdlz+cdzl+cdfl | DVD: lzma+zlib+huff
+  - `lzma` = CD: cdlz | DVD: lzma
+  - `zlib` = CD: cdzl | DVD: zlib
+  - `flac_huff` = CD: cdfl | DVD: huff
+  - `zstd` = CD: cdzs | DVD: zstd
 
 ### [benchmark]
 ```ini
-repetitions = 1
+repetitions = 3
 num_processors = 0
-verify_integrity = true
+verify_integrity = false
 output_root = ${basedir}/benchmark_results
 keep_last_output = false
 ```
-- `repetitions`: Number of runs per file/codec combo (int)
-- `num_processors`: 0=auto (all cores), 1=single-threaded, N=specific core count
+- `repetitions`: Number of runs per file/codec combo (int, default 3)
+- `num_processors`: 0=auto (all cores), 1=single-threaded, N=specific core count. chdman uses all cores by default.
 - `verify_integrity`: Boolean, verify decompressed data matches original via SHA1
 - `output_root`: Output directory for results
 - `keep_last_output`: Boolean, keep previous results or overwrite
 
 ### [benchmark_selection]
 ```ini
-benchmark_cdhplite = true
-benchmark_chdman = false
+benchmark_chdlite = true
+benchmark_chdman = true
 ```
-- `benchmark_cdhplite`: Boolean, enable CHDlite benchmarking
+- `benchmark_chdlite`: Boolean, enable CHDlite benchmarking
 - `benchmark_chdman`: Boolean, enable CHDman benchmarking (requires chdman_path)
 
 ### [output]
@@ -104,13 +103,13 @@ output_log = true
 benchmark_chd benchmark.conf
 
 # CLI override mode (overrides config file)
-benchmark_chd --config benchmark.conf --input /path/to/roms --codecs cdhplite_default_cd --reps 3 --processors 1
+benchmark_chd --config benchmark.conf --input /path/to/roms --codecs zstd --reps 3 --processors 1
 
 # CLI-only (no config file needed)
 benchmark_chd --input /path --codecs 10,12 --reps 5 --output ./results
 
 # Compare CHDlite vs CHDman baseline
-benchmark_chd --cdhplite-path /usr/bin/cdhplite --chdman-path /usr/bin/chdman --benchmark-cdhplite --benchmark-chdman --codecs chdman_best_cd --reps 3
+benchmark_chd --chdlite-path ./bin/chdlite --chdman-path ./bin/chdman --benchmark-chdlite --benchmark-chdman --codecs best --reps 3
 
 # Single-threaded baseline
 benchmark_chd --input /path --codecs 10,12 --reps 5 --processors 1
@@ -129,8 +128,8 @@ benchmark_chd --help
 - `--verify`: Enable integrity verification
 - `--formats FORMAT`: Output formats (text, csv, json)
 - `--chdman-path PATH`: Path to CHDman executable
-- `--cdhplite-path PATH`: Path to CHDlite executable
-- `--benchmark-cdhplite`: Benchmark CHDlite
+- `--chdlite-path PATH`: Path to CHDlite executable
+- `--benchmark-chdlite`: Benchmark CHDlite
 - `--benchmark-chdman`: Benchmark CHDman
 - `--help`: Show help message
 
@@ -272,7 +271,7 @@ rom1.cue,Zlib,12345678,5432100,44.05,1198.32,10.55,580.01,21.38,256500000,3
 - Warmup call to get_peak_memory() before timing (improves cache warmth)
 
 ### Tool Invocation
-- **CHDlite**: Use chdlite_api.hpp (ChdArchiver::archive(), ChdReader)
+- **CHDlite**: Use chd_api.hpp (ChdArchiver::archive(), ChdReader)
 - **CHDman**: Spawn subprocess with appropriate arguments, capture timing from execution
 - **Codec mapping**: Convert preset names to ID lists in benchmark code
 
@@ -302,16 +301,16 @@ rom1.cue,Zlib,12345678,5432100,44.05,1198.32,10.55,580.01,21.38,256500000,3
 ### Scenario 1: Compare Single vs Parallel (LZMA)
 ```bash
 # Single-threaded
-benchmark_chd --input roms/ --codecs 4 --reps 5 --processors 1 --output results_single
+benchmark_chd --input roms/ --codecs lzma --reps 5 --processors 1 --output results_single
 
 # Multi-threaded (auto cores)
-benchmark_chd --input roms/ --codecs 4 --reps 5 --processors 0 --output results_parallel
+benchmark_chd --input roms/ --codecs lzma --reps 5 --processors 0 --output results_parallel
 ```
 
 ### Scenario 2: Evaluate Codec Mix
 ```bash
-# Test Zlib vs LZMA vs combined
-benchmark_chd --input roms/ --codecs "1" "4" "1,4" --reps 3 --output results_codecs
+# Test individual codecs vs combined best
+benchmark_chd --input roms/ --codecs zlib lzma best --reps 3 --output results_codecs
 ```
 
 ### Scenario 3: Platform-Specific Benchmark
@@ -320,9 +319,9 @@ benchmark_chd --input roms/ --codecs "1" "4" "1,4" --reps 3 --output results_cod
 paths = ${basedir}/roms
 platform_skip = PS2,Dreamcast
 [codecs]
-list = 1
-3
-4
+list = lzma
+zstd
+best
 ```
 
 ## Testing & Validation

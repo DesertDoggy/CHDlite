@@ -270,16 +270,18 @@ int osd_uchar_from_osdchar(char32_t *uchar, const char *osdchar, size_t count)
 	if (!GetCPInfo(CP_ACP, &cp))
 		goto error;
 
-	// The multibyte char can't be bigger than the max character size
-	size_t max_size = IsDBCSLeadByte(*osdchar) ? cp.MaxCharSize : 1;
-	count = count < max_size ? count : max_size;
+	{
+		// The multibyte char can't be bigger than the max character size
+		size_t max_size = IsDBCSLeadByte(*osdchar) ? cp.MaxCharSize : 1;
+		count = count < max_size ? count : max_size;
 
-	WCHAR wch;
-	if (MultiByteToWideChar(CP_ACP, 0, osdchar, static_cast<DWORD>(count), &wch, 1) == 0)
-		goto error;
+		WCHAR wch;
+		if (MultiByteToWideChar(CP_ACP, 0, osdchar, static_cast<DWORD>(count), &wch, 1) == 0)
+			goto error;
 
-	*uchar = wch;
-	return static_cast<int>(count);
+		*uchar = wch;
+		return static_cast<int>(count);
+	}
 
 error:
 	*uchar = 0;

@@ -305,7 +305,12 @@ inline void sha1_process_arm(std::array<uint32_t, 5> &st, uint32_t *data) noexce
 
 #if defined(CHDLITE_X86_SHA_DISPATCH) && !defined(__SHA__)
 // Compile SHA-NI functions with target attribute for runtime dispatch
+#if defined(__clang__) || defined(__GNUC__)
 #define SHA_TARGET __attribute__((target("sha,sse4.1")))
+#elif defined(_MSC_VER)
+// MSVC: intrinsics available without target attribute; /arch:AVX2 covers SHA-NI codegen
+#define SHA_TARGET
+#endif
 #else
 #define SHA_TARGET
 #endif

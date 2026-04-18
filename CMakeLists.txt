@@ -31,18 +31,21 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-# Output directories for release
+# Output directories for release (allow override via CHDLITE_OUTPUT_DIR)
+if(NOT DEFINED CHDLITE_OUTPUT_DIR)
+    set(CHDLITE_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/Release")
+endif()
 if(WIN32)
-    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/Release/bin")
-    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/Release/lib")
-    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/Release/lib")
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CHDLITE_OUTPUT_DIR}/bin")
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CHDLITE_OUTPUT_DIR}/lib")
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CHDLITE_OUTPUT_DIR}/lib")
     
     # Override for multi-config generators (Visual Studio)
     foreach(CONF Release Debug RelWithDebInfo MinSizeRel)
         string(TOUPPER ${CONF} CONF_UPPER)
-        set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${CONF_UPPER} "${CMAKE_SOURCE_DIR}/Release/bin")
-        set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${CONF_UPPER} "${CMAKE_SOURCE_DIR}/Release/lib")
-        set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${CONF_UPPER} "${CMAKE_SOURCE_DIR}/Release/lib")
+        set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${CONF_UPPER} "${CHDLITE_OUTPUT_DIR}/bin")
+        set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${CONF_UPPER} "${CHDLITE_OUTPUT_DIR}/lib")
+        set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${CONF_UPPER} "${CHDLITE_OUTPUT_DIR}/lib")
     endforeach()
 endif()
 
@@ -151,7 +154,11 @@ if(LZMA_ASM_ENABLED)
     add_dependencies(lzma_sdk lzma_asm_obj)
     # Link the assembled object file into lzma_sdk
     target_link_libraries(lzma_sdk PRIVATE "${LZMA_ASM_OBJ}")
-    target_link_options(lzma_sdk PUBLIC "LINKER:--allow-multiple-definition")
+    if(MSVC)
+        target_link_options(lzma_sdk PUBLIC "/FORCE:MULTIPLE")
+    else()
+        target_link_options(lzma_sdk PUBLIC "LINKER:--allow-multiple-definition")
+    endif()
 endif()
 
 set_target_properties(lzma_sdk PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -296,6 +303,7 @@ set_target_properties(chdlite_shared PROPERTIES
     PREFIX ""                          # No lib prefix
     SUFFIX ".dll"
     ARCHIVE_OUTPUT_NAME chdlite_import # import lib: chdlite_import.lib (avoids clash with static chdlite.lib)
+    WINDOWS_EXPORT_ALL_SYMBOLS ON      # Auto-export all symbols (generates .def file for MSVC)
 )
 
 # Windows: copy import library with new name (cdhilite_shared.lib)

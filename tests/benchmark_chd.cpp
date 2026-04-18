@@ -36,7 +36,7 @@ struct BenchmarkConfig {
     std::vector<std::string> input_paths;
     bool recursive = true;
     std::vector<std::string> platform_skip;
-    std::vector<std::vector<int>> codec_combinations;
+    std::vector<std::string> codec_presets;  // e.g. "best", "lzma", "zlib", "flac_huff", "zstd"
     int repetitions = 1;
     int num_processors = 0;
     bool verify_integrity = true;
@@ -58,9 +58,11 @@ struct CodecInfo {
 };
 
 struct TimingResult {
+    std::string tool;  // "chdlite" or "chdman"
+    std::string preset_name;  // e.g. "best", "lzma"
     std::string input_file;
     std::string format;
-    std::vector<int> codec_combo;
+    std::vector<int> codec_combo;  // resolved CD or DVD codec IDs
     double compression_time_ms = 0.0;
     double decompression_time_ms = 0.0;
     double compression_speed_mbps = 0.0;
@@ -88,34 +90,44 @@ std::map<int, CodecInfo> g_codec_map = {
     {12, {12, "CD_FLAC", Codec::CD_FLAC}}
 };
 
-// Codec presets — match CHDlite/CHDman actual codec arrays
-std::map<std::string, std::vector<std::vector<int>>> g_codec_presets = {
-    // --best for CD: cdlz, cdzs, cdzl, cdfl (all 4 CD compound codecs)
-    {"chdman_best_cd", {{11, 10, 9, 12}}},
-    // --best for DVD: zstd, lzma, zlib, huff (all 4 generic codecs)
-    {"chdman_best_dvd", {{3, 4, 1, 6}}},
-    // CHDlite smart default for CD: cdzs + cdfl (Zstd fast + FLAC audio)
-    {"chdlite_default_cd", {{10, 12}}},
-    // CHDlite smart default for DVD: zstd (fast balanced)
-    {"chdlite_default_dvd", {{3}}},
-    // Test each CD codec individually
-    {"individual_cd", {{11}, {10}, {9}, {12}}},
-    // Test each DVD codec individually
-    {"individual_dvd", {{1}, {3}, {4}, {6}}},
-    // Best = all codecs (CD: cdlz+cdzs+cdzl+cdfl, DVD: zstd+lzma+zlib+huff)
-    {"best_cd", {{11, 10, 9, 12}}},
-    {"best_dvd", {{3, 4, 1, 6}}},
-    // Single codec tests for CD
-    {"lzma_cd", {{11}}},
-    {"zlib_cd", {{9}}},
-    {"flac_cd", {{12}}},
-    {"zstd_cd", {{10}}},
-    // Single codec tests for DVD
-    {"lzma_dvd", {{4}}},
-    {"zlib_dvd", {{1}}},
-    {"huff_dvd", {{6}}},
-    {"zstd_dvd", {{3}}}
+// Codec ID → chdman command-line codec name mapping
+std::map<int, std::string> g_chdman_codec_name = {
+    {1, "zlib"},
+    {3, "zstd"},
+    {4, "lzma"},
+    {5, "flac"},
+    {6, "huff"},
+    {9, "cdzl"},
+    {10, "cdzs"},
+    {11, "cdlz"},
+    {12, "cdfl"}
 };
+
+// Format-agnostic codec presets: auto-selects CD or DVD codecs based on input
+struct CodecPreset {
+    std::string name;
+    std::vector<int> cd_codecs;   // codec IDs for CD/GD-ROM content
+    std::vector<int> dvd_codecs;  // codec IDs for DVD/ISO content
+};
+
+std::map<std::string, CodecPreset> g_codec_presets = {
+    {"best",      {"best",      {11, 10, 9, 12}, {3, 4, 1, 6}}},
+    {"lzma",      {"lzma",      {11},            {4}}},
+    {"zlib",      {"zlib",      {9},             {1}}},
+    {"flac_huff", {"flac_huff", {12},            {6}}},
+    {"zstd",      {"zstd",      {10},            {3}}},
+};
+
+// Resolve a preset name to actual codec IDs based on whether input is CD or DVD
+bool is_cd_format(const std::string& format) {
+    return format == "CUE" || format == "GDI";
+}
+
+std::vector<int> resolve_preset(const std::string& preset_name, const std::string& format) {
+    auto it = g_codec_presets.find(preset_name);
+    if (it == g_codec_presets.end()) return {};
+    return is_cd_format(format) ? it->second.cd_codecs : it->second.dvd_codecs;
+}
 
 // ============================================================================
 // Utility Functions
@@ -124,31 +136,6 @@ std::map<std::string, std::vector<std::vector<int>>> g_codec_presets = {
 // Forward declarations
 void trim_string(std::string& str);
 std::vector<std::string> split_string(const std::string& str, char delim);
-
-std::vector<std::vector<int>> expand_codec_preset(const std::string& input) {
-    std::string trimmed = input;
-    trim_string(trimmed);
-    
-    // Check if it's a preset name
-    if (g_codec_presets.count(trimmed)) {
-        return g_codec_presets[trimmed];
-    }
-    
-    // Otherwise, parse as custom codec list
-    std::vector<std::vector<int>> result;
-    auto parts = split_string(trimmed, ',');
-    std::vector<int> combo;
-    for (auto& part : parts) {
-        trim_string(part);
-        try {
-            combo.push_back(std::stoi(part));
-        } catch (...) {}
-    }
-    if (!combo.empty()) {
-        result.push_back(combo);
-    }
-    return result;
-}
 
 size_t get_peak_memory() {
 #ifdef _WIN32
@@ -227,8 +214,8 @@ std::string detect_format(const std::string& filepath) {
 
 std::vector<std::string> discover_input_files(const BenchmarkConfig& config) {
     std::vector<std::string> files;
-    // Only self-contained formats; .cue/.gdi/.toc are TOC files that need raw track data
-    std::vector<std::string> extensions = {".chd", ".iso"};
+    // Include all disc image formats: .iso for DVD, .cue/.gdi for CD/GD-ROM
+    std::vector<std::string> extensions = {".chd", ".iso", ".cue", ".gdi"};
 
     for (const auto& path_str : config.input_paths) {
         try {
@@ -279,6 +266,8 @@ public:
 
         std::string line;
         std::string current_section;
+        std::string last_section;
+        std::string last_key;
 
         while (std::getline(file, line)) {
             trim_string(line);
@@ -290,6 +279,7 @@ public:
             if (line[0] == '[' && line[line.length() - 1] == ']') {
                 current_section = line.substr(1, line.length() - 2);
                 trim_string(current_section);
+                last_key.clear();
                 continue;
             }
 
@@ -301,6 +291,11 @@ public:
                 trim_string(value);
                 
                 m_data[current_section][key] = value;
+                last_section = current_section;
+                last_key = key;
+            } else if (!last_key.empty()) {
+                // Continuation line: append to previous key with newline separator
+                m_data[last_section][last_key] += "\n" + line;
             }
         }
 
@@ -382,17 +377,16 @@ bool load_config(const std::string& config_file, BenchmarkConfig& config) {
         config.chdlite_path = "chdlite.exe";  // Default to PATH
     }
 
-    // Parse codec combinations (now supporting presets)
+    // Parse codec presets (format-agnostic names like "best", "lzma", etc.)
     std::string codec_str = ini.get("codecs", "list", "");
     if (!codec_str.empty()) {
         auto lines = split_string(codec_str, '\n');
         for (auto& line : lines) {
             trim_string(line);
-            if (!line.empty()) {
-                auto expanded = expand_codec_preset(line);
-                for (auto& combo : expanded) {
-                    config.codec_combinations.push_back(combo);
-                }
+            if (!line.empty() && g_codec_presets.count(line)) {
+                config.codec_presets.push_back(line);
+            } else if (!line.empty()) {
+                std::cerr << "Warning: unknown codec preset '" << line << "', skipping\n";
             }
         }
     }
@@ -422,15 +416,89 @@ bool load_config(const std::string& config_file, BenchmarkConfig& config) {
 // Benchmark Execution
 // ============================================================================
 
-TimingResult run_benchmark(const std::string& input_file, 
+// Get total input size for a disc image (sums all tracks for cue/gdi)
+uint64_t get_input_size(const std::string& input_file) {
+    std::string fmt = detect_format(input_file);
+    if (fmt == "ISO" || fmt == "CHD") {
+        return fs::file_size(input_file);
+    }
+    // For CUE/GDI, sum all files in the same directory with the same base name prefix
+    // or just sum all bin/raw/iso files in the directory
+    fs::path dir = fs::path(input_file).parent_path();
+    uint64_t total = 0;
+    for (const auto& entry : fs::directory_iterator(dir)) {
+        if (entry.is_regular_file()) {
+            auto ext = entry.path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (ext == ".bin" || ext == ".raw" || ext == ".img" || ext == ".iso") {
+                total += entry.file_size();
+            }
+        }
+    }
+    return total > 0 ? total : fs::file_size(input_file);
+}
+
+// Build chdman codec string from codec combo IDs: e.g. "cdlz,cdzs,cdzl,cdfl"
+std::string build_chdman_codec_string(const std::vector<int>& codec_combo) {
+    std::string result;
+    for (size_t i = 0; i < codec_combo.size(); ++i) {
+        if (i > 0) result += ",";
+        if (g_chdman_codec_name.count(codec_combo[i])) {
+            result += g_chdman_codec_name[codec_combo[i]];
+        }
+    }
+    return result;
+}
+
+// Determine if resolved codec IDs are CD compound codecs
+// Run an external process and return its exit code
+int run_process(const std::string& command) {
+#ifdef _WIN32
+    // Use CreateProcess for proper timing on Windows
+    STARTUPINFOA si = {};
+    PROCESS_INFORMATION pi = {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    // Redirect stdout/stderr to NUL
+    HANDLE hNull = CreateFileA("NUL", GENERIC_WRITE, FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    si.hStdOutput = hNull;
+    si.hStdError = hNull;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+
+    std::string cmd_copy = command;  // CreateProcess needs non-const
+    if (!CreateProcessA(nullptr, cmd_copy.data(), nullptr, nullptr, TRUE,
+                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        if (hNull != INVALID_HANDLE_VALUE) CloseHandle(hNull);
+        return -1;
+    }
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD exit_code = 0;
+    GetExitCodeProcess(pi.hProcess, &exit_code);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    if (hNull != INVALID_HANDLE_VALUE) CloseHandle(hNull);
+    return static_cast<int>(exit_code);
+#else
+    return system((command + " > /dev/null 2>&1").c_str());
+#endif
+}
+
+// Build a quoted command string
+std::string quote(const std::string& s) {
+    return "\"" + s + "\"";
+}
+
+// ---- CHDlite benchmark (uses library directly) ----
+TimingResult run_benchmark_chdlite(const std::string& input_file, 
                           const std::vector<int>& codec_combo,
                           const BenchmarkConfig& config) {
     TimingResult result;
+    result.tool = "chdlite";
     result.input_file = input_file;
     result.codec_combo = codec_combo;
     result.format = detect_format(input_file);
 
-    fs::path temp_output = config.output_root / "temp.chd";
+    fs::path temp_output = config.output_root / "temp_chdlite.chd";
     fs::create_directories(config.output_root);
 
     ChdArchiver archiver;
@@ -448,7 +516,7 @@ TimingResult run_benchmark(const std::string& input_file,
     }
 
     try {
-        result.original_size = fs::file_size(input_file);
+        result.original_size = get_input_size(input_file);
 
         get_peak_memory(); // Warmup
 
@@ -508,6 +576,112 @@ TimingResult run_benchmark(const std::string& input_file,
     return result;
 }
 
+// ---- CHDman benchmark (shells out to chdman.exe) ----
+TimingResult run_benchmark_chdman(const std::string& input_file,
+                                  const std::vector<int>& codec_combo,
+                                  const BenchmarkConfig& config) {
+    TimingResult result;
+    result.tool = "chdman";
+    result.input_file = input_file;
+    result.codec_combo = codec_combo;
+    result.format = detect_format(input_file);
+
+    fs::path temp_chd = config.output_root / "temp_chdman.chd";
+    fs::path temp_extract = config.output_root / "temp_chdman_extract";
+    fs::create_directories(config.output_root);
+
+    // Clean up any leftover temp files
+    if (fs::exists(temp_chd)) fs::remove(temp_chd);
+
+    bool cd_mode = is_cd_format(result.format);
+    std::string codec_str = build_chdman_codec_string(codec_combo);
+    std::string np_str = std::to_string(config.num_processors == 0 ? 0 : config.num_processors);
+
+    try {
+        result.original_size = get_input_size(input_file);
+
+        // === Compression phase ===
+        // chdman createcd -i input -o output.chd -c codecs -np N
+        // chdman createdvd -i input -o output.chd -c codecs -np N
+        std::string create_cmd;
+        if (cd_mode) {
+            create_cmd = quote(config.chdman_path.string()) +
+                " createcd -i " + quote(input_file) +
+                " -o " + quote(temp_chd.string()) +
+                " -c " + codec_str;
+        } else {
+            create_cmd = quote(config.chdman_path.string()) +
+                " createdvd -i " + quote(input_file) +
+                " -o " + quote(temp_chd.string()) +
+                " -c " + codec_str;
+        }
+        if (config.num_processors > 0) {
+            create_cmd += " -np " + np_str;
+        }
+
+        auto comp_start = high_resolution_clock::now();
+        int comp_exit = run_process(create_cmd);
+        auto comp_end = high_resolution_clock::now();
+
+        if (comp_exit != 0 || !fs::exists(temp_chd)) {
+            std::cerr << "chdman compression failed (exit=" << comp_exit << "): " << input_file << std::endl;
+            if (fs::exists(temp_chd)) fs::remove(temp_chd);
+            return result;
+        }
+
+        result.compression_time_ms = duration<double, std::milli>(comp_end - comp_start).count();
+        result.compressed_size = fs::file_size(temp_chd);
+        result.compression_ratio = 100.0 * result.compressed_size / result.original_size;
+        result.compression_speed_mbps = (result.original_size / (1024.0 * 1024.0)) / (result.compression_time_ms / 1000.0);
+        result.peak_memory_bytes = get_peak_memory(); // approximation
+
+        // === Decompression phase ===
+        if (config.verify_integrity) {
+            // Clean up extract temp dir
+            if (fs::exists(temp_extract)) fs::remove_all(temp_extract);
+            fs::create_directories(temp_extract);
+
+            std::string extract_output;
+            std::string extract_cmd;
+
+            if (cd_mode) {
+                // extractcd uses -sb to write subchannel data to separate .sub file
+                extract_output = (temp_extract / "temp_out.cue").string();
+                extract_cmd = quote(config.chdman_path.string()) +
+                    " extractcd -i " + quote(temp_chd.string()) +
+                    " -o " + quote(extract_output) +
+                    " -sb " + quote((temp_extract / "temp_out.sub").string());
+            } else {
+                extract_output = (temp_extract / "temp_out.iso").string();
+                extract_cmd = quote(config.chdman_path.string()) +
+                    " extractdvd -i " + quote(temp_chd.string()) +
+                    " -o " + quote(extract_output);
+            }
+
+            auto decomp_start = high_resolution_clock::now();
+            int decomp_exit = run_process(extract_cmd);
+            auto decomp_end = high_resolution_clock::now();
+
+            if (decomp_exit == 0) {
+                result.decompression_time_ms = duration<double, std::milli>(decomp_end - decomp_start).count();
+                result.decompression_speed_mbps = (result.compressed_size / (1024.0 * 1024.0)) / (result.decompression_time_ms / 1000.0);
+            } else {
+                std::cerr << "chdman decompression failed (exit=" << decomp_exit << ")" << std::endl;
+            }
+
+            // Clean up extract temp
+            if (fs::exists(temp_extract)) fs::remove_all(temp_extract);
+        }
+
+    } catch (const std::exception& e) {
+        std::cerr << "chdman benchmark exception: " << e.what() << std::endl;
+    }
+
+    if (fs::exists(temp_chd)) fs::remove(temp_chd);
+
+    return result;
+}
+
 // ============================================================================
 // Output Generation
 // ============================================================================
@@ -515,22 +689,24 @@ TimingResult run_benchmark(const std::string& input_file,
 void generate_text_report(const std::vector<TimingResult>& results, const fs::path& output_file) {
     std::ofstream out(output_file);
     
-    out << "CHDlite Benchmark Report\n";
-    out << "========================\n\n";
+    out << "CHDlite vs CHDman Benchmark Report\n";
+    out << "===================================\n\n";
 
-    std::map<std::pair<std::string, std::vector<int>>, std::vector<TimingResult>> grouped;
+    std::map<std::tuple<std::string, std::string, std::string, std::vector<int>>, std::vector<TimingResult>> grouped;
     for (const auto& r : results) {
-        grouped[{r.input_file, r.codec_combo}].push_back(r);
+        grouped[{r.tool, r.preset_name, r.input_file, r.codec_combo}].push_back(r);
     }
 
     for (const auto& group : grouped) {
-        out << "File: " << fs::path(group.first.first).filename().string() << "\n";
+        out << "Tool: " << std::get<0>(group.first) << "\n";
+        out << "Preset: " << std::get<1>(group.first) << "\n";
+        out << "File: " << fs::path(std::get<2>(group.first)).filename().string() << "\n";
         out << "Format: " << group.second[0].format << "\n";
         out << "Codecs: ";
-        for (size_t i = 0; i < group.first.second.size(); ++i) {
+        for (size_t i = 0; i < std::get<3>(group.first).size(); ++i) {
             if (i > 0) out << " + ";
-            if (g_codec_map.count(group.first.second[i])) {
-                out << g_codec_map[group.first.second[i]].name;
+            if (g_codec_map.count(std::get<3>(group.first)[i])) {
+                out << g_codec_map[std::get<3>(group.first)[i]].name;
             }
         }
         out << "\n";
@@ -596,10 +772,12 @@ void generate_text_report(const std::vector<TimingResult>& results, const fs::pa
 void generate_csv_report(const std::vector<TimingResult>& results, const fs::path& output_file) {
     std::ofstream out(output_file);
     
-    out << "File,Format,Codecs,Original_Size,Compressed_Size,Ratio_%,";
+    out << "Tool,Preset,File,Format,Codecs,Original_Size,Compressed_Size,Ratio_%,";
     out << "Compression_Time_ms,Compression_Speed_MBps,Decompression_Time_ms,Decompression_Speed_MBps,Peak_Memory_MB\n";
 
     for (const auto& r : results) {
+        out << r.tool << ",";
+        out << r.preset_name << ",";
         out << fs::path(r.input_file).filename().string() << ",";
         out << r.format << ",";
         for (size_t i = 0; i < r.codec_combo.size(); ++i) {
@@ -624,6 +802,8 @@ void generate_json_report(const std::vector<TimingResult>& results, const fs::pa
     for (size_t i = 0; i < results.size(); ++i) {
         const auto& r = results[i];
         out << "    {\n";
+        out << "      \"tool\": \"" << r.tool << "\",\n";
+        out << "      \"preset\": \"" << r.preset_name << "\",\n";
         out << "      \"file\": \"" << fs::path(r.input_file).filename().string() << "\",\n";
         out << "      \"format\": \"" << r.format << "\",\n";
         out << "      \"codecs\": [";
@@ -656,7 +836,7 @@ void print_usage() {
     std::cout << "Options:\n";
     std::cout << "  --config FILE          Config file path (default: benchmark.conf)\n";
     std::cout << "  --input PATH           Input directory (repeatable)\n";
-    std::cout << "  --codecs LIST          Codec preset/combo: chdlite_default_cd or 10,12\n";
+    std::cout << "  --codecs LIST          Comma-separated presets: best,lzma,zlib,flac_huff,zstd\n";
     std::cout << "  --reps N               Number of repetitions\n";
     std::cout << "  --processors N         Processor count (0=auto, 1=single, N=specific)\n";
     std::cout << "  --output DIR           Output directory\n";
@@ -687,14 +867,11 @@ int main(int argc, char* argv[]) {
             config.input_paths.push_back(argv[++i]);
         } else if (arg == "--codecs" && i + 1 < argc) {
             std::string codec_str = argv[++i];
-            auto parts = split_string(codec_str, ' ');
+            auto parts = split_string(codec_str, ',');
             for (auto& part : parts) {
                 trim_string(part);
-                if (!part.empty()) {
-                    auto expanded = expand_codec_preset(part);
-                    for (auto& combo : expanded) {
-                        config.codec_combinations.push_back(combo);
-                    }
+                if (!part.empty() && g_codec_presets.count(part)) {
+                    config.codec_presets.push_back(part);
                 }
             }
         } else if (arg == "--reps" && i + 1 < argc) {
@@ -720,7 +897,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Load config file if exists and not all parameters provided
-    if (config.input_paths.empty() || config.codec_combinations.empty()) {
+    if (config.input_paths.empty() || config.codec_presets.empty()) {
         if (!load_config(config_file, config)) {
             std::cerr << "Error loading config file or no input paths provided\n";
             print_usage();
@@ -734,8 +911,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    if (config.codec_combinations.empty()) {
-        std::cerr << "No codec combinations configured\n";
+    if (config.codec_presets.empty()) {
+        std::cerr << "No codec presets configured\n";
         return 1;
     }
 
@@ -784,16 +961,24 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "\n";
 
-    std::cout << "\nCodec Combinations:\n";
-    for (const auto& combo : config.codec_combinations) {
-        std::cout << "  ";
-        for (size_t i = 0; i < combo.size(); ++i) {
-            if (i > 0) std::cout << " + ";
-            if (g_codec_map.count(combo[i])) {
-                std::cout << g_codec_map[combo[i]].name;
+    std::cout << "\nCodec Presets:\n";
+    for (const auto& preset : config.codec_presets) {
+        auto it = g_codec_presets.find(preset);
+        if (it != g_codec_presets.end()) {
+            std::cout << "  " << preset << "  (CD: ";
+            for (size_t i = 0; i < it->second.cd_codecs.size(); ++i) {
+                if (i > 0) std::cout << "+";
+                if (g_codec_map.count(it->second.cd_codecs[i]))
+                    std::cout << g_codec_map[it->second.cd_codecs[i]].name;
             }
+            std::cout << " | DVD: ";
+            for (size_t i = 0; i < it->second.dvd_codecs.size(); ++i) {
+                if (i > 0) std::cout << "+";
+                if (g_codec_map.count(it->second.dvd_codecs[i]))
+                    std::cout << g_codec_map[it->second.dvd_codecs[i]].name;
+            }
+            std::cout << ")\n";
         }
-        std::cout << "\n";
     }
 
     // Prompt user
@@ -808,20 +993,58 @@ int main(int argc, char* argv[]) {
     // Run benchmarks
     std::vector<TimingResult> all_results;
 
+    // Build list of tools to benchmark
+    std::vector<std::string> tools;
+    if (config.benchmark_chdlite) tools.push_back("chdlite");
+    if (config.benchmark_chdman)  tools.push_back("chdman");
+
     for (const auto& input_file : input_files) {
-        std::cout << "\nProcessing: " << fs::path(input_file).filename().string() << "\n";
+        std::string format = detect_format(input_file);
+        std::string type_label = is_cd_format(format) ? "CD" : "DVD";
+        uint64_t input_size = get_input_size(input_file);
+        std::cout << "\nProcessing: " << fs::path(input_file).filename().string()
+                  << " (" << type_label << ", " << input_size / (1024*1024) << " MB)\n";
 
-        for (const auto& codec_combo : config.codec_combinations) {
-            for (int rep = 1; rep <= config.repetitions; ++rep) {
-                std::cout << "  Run " << rep << "/" << config.repetitions << "... ";
-                std::cout.flush();
+        for (const auto& preset : config.codec_presets) {
+            // Resolve preset to actual codec IDs based on file format
+            auto codec_combo = resolve_preset(preset, format);
+            if (codec_combo.empty()) {
+                std::cerr << "  Skipping unknown preset: " << preset << "\n";
+                continue;
+            }
 
-                auto result = run_benchmark(input_file, codec_combo, config);
-                all_results.push_back(result);
+            // Build codec label for display
+            std::string codec_label;
+            for (size_t i = 0; i < codec_combo.size(); ++i) {
+                if (i > 0) codec_label += "+";
+                if (g_codec_map.count(codec_combo[i])) {
+                    codec_label += g_codec_map[codec_combo[i]].name;
+                }
+            }
 
-                std::cout << std::fixed << std::setprecision(2);
-                std::cout << result.compression_ratio << "% ratio, ";
-                std::cout << result.compression_speed_mbps << " MB/s\n";
+            for (const auto& tool : tools) {
+                for (int rep = 1; rep <= config.repetitions; ++rep) {
+                    std::cout << "  [" << tool << "] " << preset << " (" << codec_label << ")"
+                              << " rep " << rep << "/" << config.repetitions << "... ";
+                    std::cout.flush();
+
+                    TimingResult result;
+                    if (tool == "chdlite") {
+                        result = run_benchmark_chdlite(input_file, codec_combo, config);
+                    } else {
+                        result = run_benchmark_chdman(input_file, codec_combo, config);
+                    }
+                    result.preset_name = preset;
+                    all_results.push_back(result);
+
+                    std::cout << std::fixed << std::setprecision(2);
+                    std::cout << result.compression_ratio << "% ratio, ";
+                    std::cout << result.compression_speed_mbps << " MB/s";
+                    if (result.decompression_speed_mbps > 0) {
+                        std::cout << ", decomp " << result.decompression_speed_mbps << " MB/s";
+                    }
+                    std::cout << "\n";
+                }
             }
         }
     }

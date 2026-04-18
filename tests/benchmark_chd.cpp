@@ -108,6 +108,10 @@ std::map<std::string, std::vector<std::vector<int>>> g_codec_presets = {
 // Utility Functions
 // ============================================================================
 
+// Forward declarations
+void trim_string(std::string& str);
+std::vector<std::string> split_string(const std::string& str, char delim);
+
 std::vector<std::vector<int>> expand_codec_preset(const std::string& input) {
     std::string trimmed = input;
     trim_string(trimmed);
@@ -210,7 +214,8 @@ std::string detect_format(const std::string& filepath) {
 
 std::vector<std::string> discover_input_files(const BenchmarkConfig& config) {
     std::vector<std::string> files;
-    std::vector<std::string> extensions = {".cue", ".gdi", ".iso", ".chd", ".nrg", ".toc"};
+    // Only self-contained formats; .cue/.gdi/.toc are TOC files that need raw track data
+    std::vector<std::string> extensions = {".chd", ".iso"};
 
     for (const auto& path_str : config.input_paths) {
         try {
@@ -357,11 +362,11 @@ bool load_config(const std::string& config_file, BenchmarkConfig& config) {
         config.chdman_path = expand_path(chdman_str, basedir);
     }
 
-    std::string cdhplite_str = ini.get("tools", "cdhplite_path", "");
-    if (!cdhplite_str.empty()) {
-        config.cdhplite_path = expand_path(cdhplite_str, basedir);
+    std::string chdlite_str = ini.get("tools", "chdlite_path", "");
+    if (!chdlite_str.empty()) {
+        config.chdlite_path = expand_path(chdlite_str, basedir);
     } else {
-        config.cdhplite_path = "cdhplite.exe";  // Default to PATH
+        config.chdlite_path = "chdlite.exe";  // Default to PATH
     }
 
     // Parse codec combinations (now supporting presets)
@@ -388,7 +393,7 @@ bool load_config(const std::string& config_file, BenchmarkConfig& config) {
     config.keep_last_output = ini.get_bool("benchmark", "keep_last_output", false);
 
     // Benchmark selection
-    config.benchmark_cdhplite = ini.get_bool("benchmark_selection", "benchmark_cdhplite", true);
+    config.benchmark_chdlite = ini.get_bool("benchmark_selection", "benchmark_chdlite", true);
     config.benchmark_chdman = ini.get_bool("benchmark_selection", "benchmark_chdman", false);
 
     std::string formats_str = ini.get("output", "output_formats", "text,csv,json");
@@ -438,7 +443,7 @@ TimingResult run_benchmark(const std::string& input_file,
         ArchiveResult comp_result = archiver.archive(input_file, temp_output.string(), opts);
         auto comp_end = high_resolution_clock::now();
 
-        if (comp_result != ArchiveResult::OK) {
+        if (!comp_result.success) {
             std::cerr << "Compression failed: " << input_file << std::endl;
             if (fs::exists(temp_output)) fs::remove(temp_output);
             return result;
@@ -638,16 +643,16 @@ void print_usage() {
     std::cout << "Options:\n";
     std::cout << "  --config FILE          Config file path (default: benchmark.conf)\n";
     std::cout << "  --input PATH           Input directory (repeatable)\n";
-    std::cout << "  --codecs LIST          Codec preset/combo: cdhplite_default_cd or 10,12\n";
+    std::cout << "  --codecs LIST          Codec preset/combo: chdlite_default_cd or 10,12\n";
     std::cout << "  --reps N               Number of repetitions\n";
     std::cout << "  --processors N         Processor count (0=auto, 1=single, N=specific)\n";
     std::cout << "  --output DIR           Output directory\n";
     std::cout << "  --verify               Enable integrity verification\n";
     std::cout << "  --formats FORMAT       Output formats (text,csv,json)\n";
     std::cout << "  --chdman-path PATH     Path to CHDman executable\n";
-    std::cout << "  --cdhplite-path PATH   Path to CHDlite executable\n";
+    std::cout << "  --chdlite-path PATH    Path to CHDlite executable\n";
     std::cout << "  --benchmark-chdman     Benchmark CHDman\n";
-    std::cout << "  --benchmark-cdhplite   Benchmark CHDlite\n";
+    std::cout << "  --benchmark-chdlite    Benchmark CHDlite\n";
     std::cout << "  --help                 Show this message\n";
 }
 
@@ -692,12 +697,12 @@ int main(int argc, char* argv[]) {
             for (auto& fmt : config.output_formats) trim_string(fmt);
         } else if (arg == "--chdman-path" && i + 1 < argc) {
             config.chdman_path = argv[++i];
-        } else if (arg == "--cdhplite-path" && i + 1 < argc) {
-            config.cdhplite_path = argv[++i];
+        } else if (arg == "--chdlite-path" && i + 1 < argc) {
+            config.chdlite_path = argv[++i];
         } else if (arg == "--benchmark-chdman") {
             config.benchmark_chdman = true;
-        } else if (arg == "--benchmark-cdhplite") {
-            config.benchmark_cdhplite = true;
+        } else if (arg == "--benchmark-chdlite") {
+            config.benchmark_chdlite = true;
         }
     }
 
@@ -722,8 +727,8 @@ int main(int argc, char* argv[]) {
     }
 
     // Validate that at least one benchmarking tool is enabled
-    if (!config.benchmark_cdhplite && !config.benchmark_chdman) {
-        std::cerr << "No benchmarking tools enabled (set benchmark_cdhplite or benchmark_chdman to true)\n";
+    if (!config.benchmark_chdlite && !config.benchmark_chdman) {
+        std::cerr << "No benchmarking tools enabled (set benchmark_chdlite or benchmark_chdman to true)\n";
         return 1;
     }
 
@@ -746,11 +751,11 @@ int main(int argc, char* argv[]) {
     // Display benchmark settings
     std::cout << "\nBenchmark Settings:\n";
     std::cout << "  Benchmarking Tools: ";
-    if (config.benchmark_cdhplite) std::cout << "CHDlite ";
+    if (config.benchmark_chdlite) std::cout << "CHDlite ";
     if (config.benchmark_chdman) std::cout << "CHDman ";
     std::cout << "\n";
-    if (!config.cdhplite_path.empty()) {
-        std::cout << "  CHDlite Path: " << config.cdhplite_path.string() << "\n";
+    if (!config.chdlite_path.empty()) {
+        std::cout << "  CHDlite Path: " << config.chdlite_path.string() << "\n";
     }
     if (!config.chdman_path.empty()) {
         std::cout << "  CHDman Path: " << config.chdman_path.string() << "\n";

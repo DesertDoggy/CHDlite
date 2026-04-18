@@ -105,6 +105,7 @@ public:
 	// utilities
 	static bool codec_exists(chd_codec_type type) noexcept;
 	static const char *codec_name(chd_codec_type type) noexcept;
+	static double codec_compress_weight(chd_codec_type type) noexcept;
 };
 
 
@@ -129,7 +130,6 @@ private:
 	uint32_t                m_hunkbytes;        // number of bytes in a hunk
 	chd_compressor::ptr     m_compressor[4];    // array of active codecs
 	std::vector<uint8_t>    m_compress_test;    // test buffer for compression
-	std::vector<uint8_t>    m_codec_buffers[4]; // per-codec buffers for parallel trials
 	int                     m_num_codecs;       // number of active codecs
 #if CHDCODEC_VERIFY_COMPRESSION
 	chd_decompressor::ptr   m_decompressor[4];  // array of active codecs

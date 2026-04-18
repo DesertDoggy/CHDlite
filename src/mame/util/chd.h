@@ -524,7 +524,9 @@ private:
 			, m_complen(0)
 			, m_compression(0)
 			, m_codecs(nullptr)
-		{ }
+			, m_codec_complens{}
+			, m_codecs_remaining(0)
+		{ m_codec_lock.clear(); }
 
 		osd_work_item *     m_osd;              // OSD work item running on this block
 		chd_file_compressor *m_compressor;      // pointer back to the compressor
@@ -538,6 +540,19 @@ private:
 		int8_t                m_compression;      // type of compression used
 		chd_compressor_group *m_codecs;         // codec instance
 		std::vector<hash_pair> m_hash;        // array of hashes
+
+		// per-codec results (for weighted multi-codec mode)
+		uint32_t              m_codec_complens[4]; // compressed length per codec queue
+		std::atomic<int>      m_codecs_remaining;  // countdown: 0 = all codecs done
+		std::atomic_flag      m_codec_lock;        // spinlock for compare-and-copy best
+	};
+
+	// parameter for per-codec compression callback
+	struct codec_work_param
+	{
+		chd_file_compressor *m_compressor;
+		int m_queue_idx;    // which codec queue (0..m_codec_queue_count-1)
+		int m_item_idx;     // work_item index (0..WORK_BUFFER_HUNKS-1)
 	};
 
 	// internal helpers
@@ -547,6 +562,8 @@ private:
 	void async_compress_hunk(work_item &item, int threadid);
 	static void *async_read_static(void *param, int threadid);
 	void async_read();
+	static void *async_compress_codec_static(void *param, int threadid);
+	void async_compress_codec(int queue_idx, int item_idx, int threadid);
 
 	// current compression status
 	bool                    m_walking_parent;   // are we building the parent map?
@@ -571,6 +588,14 @@ private:
 	std::vector<uint8_t>    m_compressed_buffer;// buffer containing compressed data
 	work_item               m_work_item[WORK_BUFFER_HUNKS]; // status of each hunk
 	chd_compressor_group *  m_codecs[WORK_MAX_THREADS]; // codecs to use
+
+	// per-codec weighted work queues (multi-codec mode)
+	int                     m_codec_queue_count;                    // 0 = use legacy path
+	osd_work_queue *        m_codec_queues[4];                      // one queue per active codec
+	int                     m_codec_map[4];                         // queue idx -> compression[] idx
+	chd_compressor *        m_per_codec_comp[4][WORK_MAX_THREADS];  // compressor[queue][thread]
+	std::vector<uint8_t>    m_per_codec_buf[4][WORK_MAX_THREADS];   // per-thread output buffer
+	codec_work_param        m_codec_params[4][WORK_BUFFER_HUNKS];   // callback params
 
 	// output state
 	uint32_t                m_write_hunk;       // next hunk to write

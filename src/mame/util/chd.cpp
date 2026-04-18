@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <new>
+#include <thread>
 #include <tuple>
 
 
@@ -2946,10 +2947,15 @@ chd_file_compressor::chd_file_compressor() :
 	m_read_queue_offset(0),
 	m_read_done_offset(0),
 	m_work_queue(nullptr),
+	m_codec_queue_count(0),
 	m_write_hunk(0)
 {
 	// zap arrays
 	std::fill(std::begin(m_codecs), std::end(m_codecs), nullptr);
+	std::fill(std::begin(m_codec_queues), std::end(m_codec_queues), nullptr);
+	std::fill(std::begin(m_codec_map), std::end(m_codec_map), -1);
+	for (auto &row : m_per_codec_comp)
+		std::fill(std::begin(row), std::end(row), nullptr);
 
 	// allocate work queues
 	m_read_queue = osd_work_queue_alloc(WORK_QUEUE_FLAG_IO);
@@ -2969,10 +2975,15 @@ chd_file_compressor::~chd_file_compressor()
 	// free the work queues
 	osd_work_queue_free(m_read_queue);
 	osd_work_queue_free(m_work_queue);
+	for (int q = 0; q < m_codec_queue_count; q++)
+		osd_work_queue_free(m_codec_queues[q]);
 
 	// delete allocated arrays
 	for (auto & elem : m_codecs)
 		delete elem;
+	for (auto &row : m_per_codec_comp)
+		for (auto &comp : row)
+			delete comp;
 }
 
 /**
@@ -3013,21 +3024,88 @@ void chd_file_compressor::compress_begin()
 		item.m_hash.resize(hunk_bytes() / unit_bytes());
 	}
 
-	// initialize codec instances
+	// initialize codec instances (used for single-codec path and parent walking)
 	for (auto & elem : m_codecs)
 	{
 		delete elem;
 		elem = new chd_compressor_group(*this, m_compression);
 	}
 
-	// if multi-codec with parallel trials, reduce hunk threads to avoid oversubscription
-	// (each hunk thread spawns num_codecs sub-threads internally)
+	// clean up any previous per-codec queues
+	for (int q = 0; q < m_codec_queue_count; q++)
+	{
+		osd_work_queue_free(m_codec_queues[q]);
+		m_codec_queues[q] = nullptr;
+	}
+	for (auto &row : m_per_codec_comp)
+		for (auto &comp : row) { delete comp; comp = nullptr; }
+	m_codec_queue_count = 0;
+
+	// set up per-codec weighted work queues for multi-codec compression
 	if (m_codecs[0] && m_codecs[0]->num_codecs() > 1)
 	{
 		int num_codecs = m_codecs[0]->num_codecs();
-		int max_hunk_threads = std::max(1, osd_get_num_processors(true) / num_codecs);
+		int total_cores = std::max(num_codecs, osd_get_num_processors(true));
+
+		// collect active codec types and weights
+		double weights[4] = {};
+		int codec_indices[4] = {};
+		int nq = 0;
+		for (int i = 0; i < 4 && m_compression[i] != CHD_CODEC_NONE; i++)
+		{
+			codec_indices[nq] = i;
+			weights[nq] = chd_codec_list::codec_compress_weight(m_compression[i]);
+			nq++;
+		}
+
+		// greedy weighted allocation: each codec gets at least 1 core
+		int alloc[4] = {};
+		for (int i = 0; i < nq; i++) alloc[i] = 1;
+		int remaining = total_cores - nq;
+		while (remaining > 0)
+		{
+			// find codec with highest weight/allocation ratio (most underserved)
+			int best = 0;
+			double best_ratio = -1.0;
+			for (int i = 0; i < nq; i++)
+			{
+				double ratio = weights[i] / alloc[i];
+				if (ratio > best_ratio) { best_ratio = ratio; best = i; }
+			}
+			alloc[best]++;
+			remaining--;
+		}
+
+		// cap each allocation to WORK_MAX_THREADS
+		for (int i = 0; i < nq; i++)
+			alloc[i] = std::min(alloc[i], (int)WORK_MAX_THREADS);
+
+		// create per-codec queues, compressors, and buffers
+		m_codec_queue_count = nq;
+		for (int q = 0; q < nq; q++)
+		{
+			m_codec_map[q] = codec_indices[q];
+			m_codec_queues[q] = osd_work_queue_alloc(WORK_QUEUE_FLAG_MULTI, alloc[q]);
+
+			// create compressor instances for each thread in this queue
+			for (int t = 0; t < alloc[q]; t++)
+			{
+				m_per_codec_comp[q][t] = chd_codec_list::new_compressor(m_compression[codec_indices[q]], *this).release();
+				m_per_codec_buf[q][t].resize(hunk_bytes());
+			}
+
+			// initialize callback params
+			for (int h = 0; h < WORK_BUFFER_HUNKS; h++)
+			{
+				m_codec_params[q][h].m_compressor = this;
+				m_codec_params[q][h].m_queue_idx = q;
+				m_codec_params[q][h].m_item_idx = h;
+			}
+		}
+
+		// reduce legacy work queue (only used for parent walking in multi-codec mode)
 		osd_work_queue_free(m_work_queue);
-		m_work_queue = osd_work_queue_alloc(WORK_QUEUE_FLAG_MULTI, max_hunk_threads);
+		m_work_queue = osd_work_queue_alloc(WORK_QUEUE_FLAG_MULTI, 1);
 	}
 
 	// reset write state
@@ -3187,9 +3265,13 @@ std::error_condition chd_file_compressor::compress_continue(double &progress, do
 	// if we're waiting for work, wait
 	// sometimes code can get here with .m_status == WS_READY and .m_osd != nullptr, TODO find out why this happens
 	while ((m_work_item[m_write_hunk % WORK_BUFFER_HUNKS].m_status != WS_READY) &&
-			(m_work_item[m_write_hunk % WORK_BUFFER_HUNKS].m_status != WS_COMPLETE) &&
-			m_work_item[m_write_hunk % WORK_BUFFER_HUNKS].m_osd)
-		osd_work_item_wait(m_work_item[m_write_hunk % WORK_BUFFER_HUNKS].m_osd, osd_ticks_per_second());
+			(m_work_item[m_write_hunk % WORK_BUFFER_HUNKS].m_status != WS_COMPLETE))
+	{
+		if (m_work_item[m_write_hunk % WORK_BUFFER_HUNKS].m_osd)
+			osd_work_item_wait(m_work_item[m_write_hunk % WORK_BUFFER_HUNKS].m_osd, osd_ticks_per_second());
+		else
+			std::this_thread::yield(); // per-codec mode: no single OSD item to wait on
+	}
 
 	return m_walking_parent ? error::WALKING_PARENT : error::COMPRESSING;
 }
@@ -3278,6 +3360,56 @@ void chd_file_compressor::async_compress_hunk(work_item &item, int threadid)
 	item.m_status = WS_COMPLETE;
 }
 
+//-------------------------------------------------
+//  async_compress_codec - handle per-codec
+//  compression for weighted multi-codec mode
+//-------------------------------------------------
+
+void *chd_file_compressor::async_compress_codec_static(void *param, int threadid)
+{
+	auto *p = reinterpret_cast<codec_work_param *>(param);
+	p->m_compressor->async_compress_codec(p->m_queue_idx, p->m_item_idx, threadid);
+	return nullptr;
+}
+
+void chd_file_compressor::async_compress_codec(int queue_idx, int item_idx, int threadid)
+{
+	work_item &item = m_work_item[item_idx];
+
+	// compress into per-thread buffer
+	uint8_t *dest = m_per_codec_buf[queue_idx][threadid].data();
+	chd_compressor *comp = m_per_codec_comp[queue_idx][threadid];
+	uint32_t compbytes;
+	try
+	{
+		compbytes = comp->compress(item.m_data, hunk_bytes(), dest);
+	}
+	catch (...)
+	{
+		compbytes = hunk_bytes() + 1; // mark as failed
+	}
+	item.m_codec_complens[queue_idx] = compbytes;
+
+	// compare-and-copy under spinlock: if this result is the best so far, copy to output
+	if (compbytes < hunk_bytes())
+	{
+		while (item.m_codec_lock.test_and_set(std::memory_order_acquire)) {}
+		if (compbytes < item.m_complen)
+		{
+			memcpy(item.m_compressed, dest, compbytes);
+			item.m_complen = compbytes;
+			item.m_compression = static_cast<int8_t>(m_codec_map[queue_idx]);
+		}
+		item.m_codec_lock.clear(std::memory_order_release);
+	}
+
+	// if we're the last codec to finish, finalize
+	if (item.m_codecs_remaining.fetch_sub(1, std::memory_order_acq_rel) == 1)
+	{
+		item.m_status = WS_COMPLETE;
+	}
+}
+
 /**
  * @fn  void *chd_file_compressor::async_read_static(void *param, int threadid)
  *
@@ -3350,11 +3482,34 @@ void chd_file_compressor::async_read()
 		for (uint64_t curoffs = m_read_done_offset; curoffs < end_offset; curoffs += hunk_bytes())
 		{
 			uint32_t hunknum = curoffs / hunk_bytes();
-			work_item &item = m_work_item[hunknum % WORK_BUFFER_HUNKS];
+			int itemnum = hunknum % WORK_BUFFER_HUNKS;
+			work_item &item = m_work_item[itemnum];
 			assert(item.m_status == WS_READING);
 			item.m_status = WS_QUEUED;
 			item.m_hunknum = hunknum;
-			item.m_osd = osd_work_item_queue(m_work_queue, m_walking_parent ? async_walk_parent_static : async_compress_hunk_static, &item, 0);
+
+			if (m_walking_parent)
+			{
+				item.m_osd = osd_work_item_queue(m_work_queue, async_walk_parent_static, &item, 0);
+			}
+			else if (m_codec_queue_count > 1)
+			{
+				// per-codec mode: submit to each codec's dedicated queue
+				item.m_osd = nullptr;
+				item.m_complen = hunk_bytes();
+				item.m_compression = -1;
+				item.m_codec_lock.clear(std::memory_order_relaxed);
+				item.m_codecs_remaining.store(m_codec_queue_count, std::memory_order_release);
+				for (int q = 0; q < m_codec_queue_count; q++)
+				{
+					osd_work_item_queue(m_codec_queues[q], async_compress_codec_static,
+						&m_codec_params[q][itemnum], WORK_ITEM_FLAG_AUTO_RELEASE);
+				}
+			}
+			else
+			{
+				item.m_osd = osd_work_item_queue(m_work_queue, async_compress_hunk_static, &item, 0);
+			}
 		}
 
 		// continue the running SHA-1

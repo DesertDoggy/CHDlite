@@ -439,6 +439,32 @@ uint64_t get_input_size(const std::string& input_file) {
     return total > 0 ? total : fs::file_size(input_file);
 }
 
+// Prime the OS file cache by reading all input data so both tools start from warm cache
+void prime_file_cache(const std::string& input_file) {
+    std::string fmt = detect_format(input_file);
+    std::vector<std::string> files_to_read;
+    if (fmt == "ISO" || fmt == "CHD") {
+        files_to_read.push_back(input_file);
+    } else {
+        files_to_read.push_back(input_file);
+        fs::path dir = fs::path(input_file).parent_path();
+        for (const auto& entry : fs::directory_iterator(dir)) {
+            if (entry.is_regular_file()) {
+                auto ext = entry.path().extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                if (ext == ".bin" || ext == ".raw" || ext == ".img" || ext == ".iso")
+                    files_to_read.push_back(entry.path().string());
+            }
+        }
+    }
+    constexpr size_t BUF_SIZE = 1 << 20; // 1 MB
+    std::vector<char> buf(BUF_SIZE);
+    for (const auto& f : files_to_read) {
+        std::ifstream in(f, std::ios::binary);
+        while (in.read(buf.data(), BUF_SIZE) || in.gcount() > 0) {}
+    }
+}
+
 // Build chdman codec string from codec combo IDs: e.g. "cdlz,cdzs,cdzl,cdfl"
 std::string build_chdman_codec_string(const std::vector<int>& codec_combo) {
     std::string result;
@@ -1061,6 +1087,9 @@ int main(int argc, char* argv[]) {
                               << " [" << tool << "] " << preset << " (" << codec_label << ")"
                               << " rep " << rep << "/" << config.repetitions << "... ";
                     std::cout.flush();
+
+                    // Prime OS file cache so both tools start from warm cache
+                    prime_file_cache(input_file);
 
                     TimingResult result;
                     if (tool == "chdlite") {

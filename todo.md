@@ -28,7 +28,7 @@
 - [x] **SIMD Optimization 9**: CMakeLists SIMD compile flags
 - [x] **SIMD Optimization 10**: Per-file pipeline deferred hash
 - [x] **SIMD Optimization 11**: N_SLOTS=3 triple-buffer pipeline
-- [ ] **SIMD Optimization 12**: LZMA ASM decoder (LzmaDecOpt.asm, requires UASM)
+- [/] **SIMD Optimization 12**: LZMA ASM decoder (LzmaDecOpt.asm, requires UASM) Win OK.
 - [x] **SIMD Optimization 13**: Audio byte-swap auto-vectorization
 - [x] **SIMD Optimization 14**: Remove 4-core cap, wire `-np` flag
 - [x] **SIMD Optimization 15**: Multi-file batch thread budget

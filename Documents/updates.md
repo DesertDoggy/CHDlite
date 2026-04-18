@@ -1,6 +1,8 @@
 # CHDlite Updates & Release Notes
 ## v0.2.0
-
+### New Binaries
+- chdcomp binary with automatic `--best` compression (CD: `cdzs,cdlz,cdzl,cdfl` / DVD: `zstd,lzma,zlib`) now compresses to chdman default + zstd to get best compression
+- benchmark binary for benchmarking chdman and chdlite
 ### Speed Optimization
 - zlib-ng integration
 - xxHash AVX2 auto-dispatch
@@ -28,7 +30,6 @@
 ### Others
 - Extend read to support non-CHD files (ISO images, CD images, etc.)
 - Terminology change: "system" → "platform" (detect_system → detect_game_platform)
-- chdcomp binary with automatic `--best` compression (CD: `cdzs,cdlz,cdzl,cdfl` / DVD: `zstd,lzma,zlib`)
 - `--best` compression preset for create command
 - Default `-o` flags for auto-generated output paths
 - `verify`, `copy`, `dumpmeta` commands with full option support

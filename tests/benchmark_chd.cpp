@@ -24,6 +24,9 @@
     #include <unistd.h>
 #endif
 
+// Access the OSD thread count (defined in osdsync.cpp, same as CLI does)
+extern int osd_num_processors;
+
 namespace fs = std::filesystem;
 using namespace chdlite;
 using namespace std::chrono;
@@ -504,8 +507,10 @@ TimingResult run_benchmark_chdlite(const std::string& input_file,
     ChdArchiver archiver;
     ArchiveOptions opts;
 
-    // Set processor count
+    // Enforce thread count so chdlite matches chdman -np
     opts.num_processors = config.num_processors;
+    if (config.num_processors > 0)
+        osd_num_processors = config.num_processors;
 
     // Convert codec combination to compression array
     for (size_t i = 0; i < codec_combo.size() && i < 4; ++i) {
@@ -520,9 +525,25 @@ TimingResult run_benchmark_chdlite(const std::string& input_file,
 
         get_peak_memory(); // Warmup
 
+        // In-place progress: overwrite same line with compress %
+        int last_pct = -1;
+        opts.progress_callback = [&last_pct](uint64_t done, uint64_t total) -> bool {
+            int pct = total > 0 ? static_cast<int>(100 * done / total) : 0;
+            if (pct != last_pct) {
+                last_pct = pct;
+                std::cout << "\r  [chdlite] compressing... " << pct << "%   ";
+                std::cout.flush();
+            }
+            return true;
+        };
+
         auto comp_start = high_resolution_clock::now();
         ArchiveResult comp_result = archiver.archive(input_file, temp_output.string(), opts);
         auto comp_end = high_resolution_clock::now();
+
+        // Clear the progress line
+        std::cout << "\r" << std::string(60, ' ') << "\r";
+        std::cout.flush();
 
         if (!comp_result.success) {
             std::cerr << "Compression failed: " << input_file << std::endl;
@@ -536,33 +557,33 @@ TimingResult run_benchmark_chdlite(const std::string& input_file,
         result.compression_ratio = 100.0 * result.compressed_size / result.original_size;
         result.compression_speed_mbps = (result.original_size / (1024.0 * 1024.0)) / (result.compression_time_ms / 1000.0);
 
-        // Decompression phase
-        if (config.verify_integrity) {
-            ChdReader reader;
+        // Decompression phase: extract to disk (same as chdman extractcd/extractdvd)
+        {
+            fs::path temp_extract = config.output_root / "temp_chdlite_extract";
+            if (fs::exists(temp_extract)) fs::remove_all(temp_extract);
+            fs::create_directories(temp_extract);
+
             try {
-                reader.open(temp_output.string());
-                auto header = reader.read_header();
+                ChdExtractor extractor;
+                ExtractOptions ext_opts;
+                ext_opts.output_dir = temp_extract.string();
+                ext_opts.force_overwrite = true;
 
                 auto decomp_start = high_resolution_clock::now();
-
-                for (uint32_t i = 0; i < header.hunk_count; ++i) {
-                    auto hunk = reader.read_hunk(i);
-                    if (hunk.empty()) {
-                        std::cerr << "Decompression verification failed at hunk " << i << std::endl;
-                        reader.close();
-                        if (fs::exists(temp_output)) fs::remove(temp_output);
-                        return result;
-                    }
-                }
-
+                ExtractionResult ext_result = extractor.extract(temp_output.string(), ext_opts);
                 auto decomp_end = high_resolution_clock::now();
-                reader.close();
 
-                result.decompression_time_ms = duration<double, std::milli>(decomp_end - decomp_start).count();
-                result.decompression_speed_mbps = (result.compressed_size / (1024.0 * 1024.0)) / (result.decompression_time_ms / 1000.0);
+                if (ext_result.success) {
+                    result.decompression_time_ms = duration<double, std::milli>(decomp_end - decomp_start).count();
+                    result.decompression_speed_mbps = (result.original_size / (1024.0 * 1024.0)) / (result.decompression_time_ms / 1000.0);
+                } else {
+                    std::cerr << "chdlite decompression (extract) failed" << std::endl;
+                }
             } catch (const std::exception& e) {
-                std::cerr << "Error during decompression verification: " << e.what() << std::endl;
+                std::cerr << "Error during chdlite extraction: " << e.what() << std::endl;
             }
+
+            if (fs::exists(temp_extract)) fs::remove_all(temp_extract);
         }
 
     } catch (const std::exception& e) {
@@ -645,12 +666,14 @@ TimingResult run_benchmark_chdman(const std::string& input_file,
             std::string extract_cmd;
 
             if (cd_mode) {
-                // extractcd uses -sb to write subchannel data to separate .sub file
-                extract_output = (temp_extract / "temp_out.cue").string();
+                // Use .gdi output for GDI sources, .cue for everything else
+                // -sb = --splitbin: one .bin per track (flag, no argument)
+                std::string out_ext = (result.format == "GDI") ? ".gdi" : ".cue";
+                extract_output = (temp_extract / ("temp_out" + out_ext)).string();
                 extract_cmd = quote(config.chdman_path.string()) +
                     " extractcd -i " + quote(temp_chd.string()) +
                     " -o " + quote(extract_output) +
-                    " -sb " + quote((temp_extract / "temp_out.sub").string());
+                    " -sb";
             } else {
                 extract_output = (temp_extract / "temp_out.iso").string();
                 extract_cmd = quote(config.chdman_path.string()) +
@@ -998,11 +1021,26 @@ int main(int argc, char* argv[]) {
     if (config.benchmark_chdlite) tools.push_back("chdlite");
     if (config.benchmark_chdman)  tools.push_back("chdman");
 
+    // Pre-compute total run count for progress tracking
+    int total_runs = 0;
     for (const auto& input_file : input_files) {
+        std::string fmt = detect_format(input_file);
+        for (const auto& preset : config.codec_presets) {
+            if (!resolve_preset(preset, fmt).empty())
+                total_runs += static_cast<int>(tools.size()) * config.repetitions;
+        }
+    }
+    int completed_runs = 0;
+    auto bench_start = high_resolution_clock::now();
+
+    int file_idx = 0;
+    for (const auto& input_file : input_files) {
+        ++file_idx;
         std::string format = detect_format(input_file);
         std::string type_label = is_cd_format(format) ? "CD" : "DVD";
         uint64_t input_size = get_input_size(input_file);
-        std::cout << "\nProcessing: " << fs::path(input_file).filename().string()
+        std::cout << "\n[File " << file_idx << "/" << input_files.size() << "] "
+                  << fs::path(input_file).filename().string()
                   << " (" << type_label << ", " << input_size / (1024*1024) << " MB)\n";
 
         for (const auto& preset : config.codec_presets) {
@@ -1024,7 +1062,25 @@ int main(int argc, char* argv[]) {
 
             for (const auto& tool : tools) {
                 for (int rep = 1; rep <= config.repetitions; ++rep) {
-                    std::cout << "  [" << tool << "] " << preset << " (" << codec_label << ")"
+                    ++completed_runs;
+                    double pct = 100.0 * completed_runs / total_runs;
+                    double elapsed_s = duration<double>(high_resolution_clock::now() - bench_start).count();
+                    double eta_s = (completed_runs > 1 && pct < 100.0)
+                        ? elapsed_s / (completed_runs - 1) * (total_runs - completed_runs + 1)
+                        : 0.0;
+
+                    // Format ETA as HH:MM:SS
+                    char eta_buf[32] = "?";
+                    if (completed_runs > 1) {
+                        int eta_i = static_cast<int>(eta_s);
+                        std::snprintf(eta_buf, sizeof(eta_buf), "%02d:%02d:%02d",
+                            eta_i / 3600, (eta_i % 3600) / 60, eta_i % 60);
+                    }
+
+                    std::cout << "  [" << completed_runs << "/" << total_runs
+                              << " " << std::fixed << std::setprecision(1) << pct << "%"
+                              << " ETA:" << eta_buf << "]"
+                              << " [" << tool << "] " << preset << " (" << codec_label << ")"
                               << " rep " << rep << "/" << config.repetitions << "... ";
                     std::cout.flush();
 
@@ -1039,9 +1095,9 @@ int main(int argc, char* argv[]) {
 
                     std::cout << std::fixed << std::setprecision(2);
                     std::cout << result.compression_ratio << "% ratio, ";
-                    std::cout << result.compression_speed_mbps << " MB/s";
+                    std::cout << result.compression_speed_mbps << " MB/s comp";
                     if (result.decompression_speed_mbps > 0) {
-                        std::cout << ", decomp " << result.decompression_speed_mbps << " MB/s";
+                        std::cout << ", " << result.decompression_speed_mbps << " MB/s decomp";
                     }
                     std::cout << "\n";
                 }

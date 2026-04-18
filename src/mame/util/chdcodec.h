@@ -121,11 +121,16 @@ public:
 	// find the best compressor
 	int8_t find_best_compressor(const uint8_t *src, uint8_t *compressed, uint32_t &complen);
 
+	// accessors
+	int num_codecs() const { return m_num_codecs; }
+
 private:
 	// internal state
 	uint32_t                m_hunkbytes;        // number of bytes in a hunk
 	chd_compressor::ptr     m_compressor[4];    // array of active codecs
 	std::vector<uint8_t>    m_compress_test;    // test buffer for compression
+	std::vector<uint8_t>    m_codec_buffers[4]; // per-codec buffers for parallel trials
+	int                     m_num_codecs;       // number of active codecs
 #if CHDCODEC_VERIFY_COMPRESSION
 	chd_decompressor::ptr   m_decompressor[4];  // array of active codecs
 	std::vector<uint8_t>    m_decompressed;     // verification buffer

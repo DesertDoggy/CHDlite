@@ -3020,6 +3020,16 @@ void chd_file_compressor::compress_begin()
 		elem = new chd_compressor_group(*this, m_compression);
 	}
 
+	// if multi-codec with parallel trials, reduce hunk threads to avoid oversubscription
+	// (each hunk thread spawns num_codecs sub-threads internally)
+	if (m_codecs[0] && m_codecs[0]->num_codecs() > 1)
+	{
+		int num_codecs = m_codecs[0]->num_codecs();
+		int max_hunk_threads = std::max(1, osd_get_num_processors(true) / num_codecs);
+		osd_work_queue_free(m_work_queue);
+		m_work_queue = osd_work_queue_alloc(WORK_QUEUE_FLAG_MULTI, max_hunk_threads);
+	}
+
 	// reset write state
 	m_write_hunk = 0;
 }

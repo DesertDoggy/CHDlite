@@ -21,6 +21,7 @@
 #include <zlib.h>
 #include <zstd.h>
 
+#include <future>
 #include <new>
 
 
@@ -698,6 +699,7 @@ const char *chd_codec_list::codec_name(chd_codec_type type) noexcept
 chd_compressor_group::chd_compressor_group(chd_file &chd, uint32_t compressor_list[4])
 	: m_hunkbytes(chd.hunk_bytes())
 	, m_compress_test(m_hunkbytes)
+	, m_num_codecs(0)
 #if CHDCODEC_VERIFY_COMPRESSION
 	, m_decompressed(m_hunkbytes)
 #endif
@@ -710,12 +712,21 @@ chd_compressor_group::chd_compressor_group(chd_file &chd, uint32_t compressor_li
 			m_compressor[codecnum] = chd_codec_list::new_compressor(compressor_list[codecnum], chd);
 			if (!m_compressor[codecnum])
 				throw std::error_condition(chd_file::error::UNKNOWN_COMPRESSION);
+			m_num_codecs++;
 #if CHDCODEC_VERIFY_COMPRESSION
 			m_decompressor[codecnum] = chd_codec_list::new_decompressor(compressor_list[codecnum], chd);
 			if (!m_decompressor[codecnum])
 				throw std::error_condition(chd_file::error::UNKNOWN_COMPRESSION);
 #endif
 		}
+	}
+
+	// allocate per-codec compression buffers for parallel trials
+	if (m_num_codecs > 1)
+	{
+		for (int i = 0; i < std::size(m_compressor); i++)
+			if (m_compressor[i])
+				m_codec_buffers[i].resize(m_hunkbytes);
 	}
 }
 
@@ -741,49 +752,69 @@ int8_t chd_compressor_group::find_best_compressor(const uint8_t *src, uint8_t *c
 	// determine best compression technique
 	complen = m_hunkbytes;
 	int8_t compression = -1;
-	for (int codecnum = 0; codecnum < std::size(m_compressor); codecnum++)
-		if (m_compressor[codecnum])
+
+	// parallel path: launch all codecs concurrently when multiple codecs are active
+	if (m_num_codecs > 1)
+	{
+		// result from each codec: compressed size (or hunkbytes+1 on failure)
+		struct codec_result { int codecnum; uint32_t compbytes; };
+		std::future<codec_result> futures[4];
+		int num_futures = 0;
+
+		for (int codecnum = 0; codecnum < std::size(m_compressor); codecnum++)
 		{
-			// attempt to compress, swallowing errors
-			try
+			if (!m_compressor[codecnum])
+				continue;
+			uint8_t *dest = m_codec_buffers[codecnum].data();
+			chd_compressor *comp = m_compressor[codecnum].get();
+			uint32_t hunkbytes = m_hunkbytes;
+			futures[num_futures++] = std::async(std::launch::async,
+				[comp, src, hunkbytes, dest, codecnum]() -> codec_result {
+					try {
+						uint32_t bytes = comp->compress(src, hunkbytes, dest);
+						return { codecnum, bytes };
+					} catch (...) {
+						return { codecnum, hunkbytes + 1 };
+					}
+				});
+		}
+
+		// collect results and pick the best
+		for (int i = 0; i < num_futures; i++)
+		{
+			auto result = futures[i].get();
+			if (result.compbytes < complen)
 			{
-				// if this is the best one, copy the data into the permanent buffer
-				uint32_t compbytes = m_compressor[codecnum]->compress(src, m_hunkbytes, &m_compress_test[0]);
-#if CHDCODEC_VERIFY_COMPRESSION
+				compression = result.codecnum;
+				complen = result.compbytes;
+			}
+		}
+
+		// copy the winner into the output buffer
+		if (compression >= 0)
+			memcpy(compressed, m_codec_buffers[compression].data(), complen);
+	}
+	else
+	{
+		// single codec: original sequential path (no thread overhead)
+		for (int codecnum = 0; codecnum < std::size(m_compressor); codecnum++)
+			if (m_compressor[codecnum])
+			{
 				try
 				{
-					memset(m_decompressed, 0, m_hunkbytes);
-					m_decompressor[codecnum]->decompress(m_compress_test, compbytes, m_decompressed, m_hunkbytes);
+					uint32_t compbytes = m_compressor[codecnum]->compress(src, m_hunkbytes, &m_compress_test[0]);
+					if (compbytes < complen)
+					{
+						compression = codecnum;
+						complen = compbytes;
+						memcpy(compressed, &m_compress_test[0], compbytes);
+					}
 				}
 				catch (...)
 				{
 				}
-
-				if (memcmp(src, m_decompressed, m_hunkbytes) != 0)
-				{
-					compbytes = m_compressor[codecnum]->compress(src, m_hunkbytes, m_compress_test);
-					try
-					{
-						m_decompressor[codecnum]->decompress(m_compress_test, compbytes, m_decompressed, m_hunkbytes);
-					}
-					catch (...)
-					{
-						memset(m_decompressed, 0, m_hunkbytes);
-					}
-				}
-printf("   codec%d=%d bytes            \n", codecnum, compbytes);
-#endif
-				if (compbytes < complen)
-				{
-					compression = codecnum;
-					complen = compbytes;
-					memcpy(compressed, &m_compress_test[0], compbytes);
-				}
 			}
-			catch (...)
-			{
-			}
-		}
+	}
 
 	// if the best is none, copy it over
 	if (compression == -1)

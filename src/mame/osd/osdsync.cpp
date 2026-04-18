@@ -248,7 +248,7 @@ int thread_adjust_priority(std::thread *thread, int adjust)
 //  osd_work_queue_alloc
 //============================================================
 
-osd_work_queue *osd_work_queue_alloc(int flags)
+osd_work_queue *osd_work_queue_alloc(int flags, int maxthreads)
 {
 	int threadnum;
 	int numprocs = effective_num_processors(!(flags & WORK_QUEUE_FLAG_HIGH_FREQ));
@@ -274,6 +274,10 @@ osd_work_queue *osd_work_queue_alloc(int flags)
 
 	if (osdworkqueuemaxthreads != nullptr && sscanf(osdworkqueuemaxthreads, "%d", &osdthreadnum) == 1 && threadnum > osdthreadnum)
 		threadnum = osdthreadnum;
+
+	// apply caller-specified max thread limit
+	if (maxthreads > 0 && threadnum > maxthreads)
+		threadnum = maxthreads;
 
 #if defined(SDLMAME_EMSCRIPTEN)
 	// threads are not supported at all

@@ -130,6 +130,11 @@ osd_ticks_t osd_ticks_per_second() noexcept;
 void osd_sleep(osd_ticks_t duration) noexcept;
 
 
+/*-----------------------------------------------------------------------------
+    osd_get_num_processors: return the number of processors
+-----------------------------------------------------------------------------*/
+int osd_get_num_processors(bool heavy_mt);
+
 
 /***************************************************************************
     WORK ITEM INTERFACES
@@ -190,7 +195,7 @@ typedef void *(*osd_work_callback)(void *param, int threadid);
         can be performed. If no threading support is available, it is a
         simple matter to execute the work items as they are queued.
 -----------------------------------------------------------------------------*/
-osd_work_queue *osd_work_queue_alloc(int flags);
+osd_work_queue *osd_work_queue_alloc(int flags, int maxthreads = 0);
 
 
 /*-----------------------------------------------------------------------------

@@ -101,7 +101,20 @@ std::map<std::string, std::vector<std::vector<int>>> g_codec_presets = {
     // Test each CD codec individually
     {"individual_cd", {{11}, {10}, {9}, {12}}},
     // Test each DVD codec individually
-    {"individual_dvd", {{1}, {3}, {4}, {6}}}
+    {"individual_dvd", {{1}, {3}, {4}, {6}}},
+    // Best = all codecs (CD: cdlz+cdzs+cdzl+cdfl, DVD: zstd+lzma+zlib+huff)
+    {"best_cd", {{11, 10, 9, 12}}},
+    {"best_dvd", {{3, 4, 1, 6}}},
+    // Single codec tests for CD
+    {"lzma_cd", {{11}}},
+    {"zlib_cd", {{9}}},
+    {"flac_cd", {{12}}},
+    {"zstd_cd", {{10}}},
+    // Single codec tests for DVD
+    {"lzma_dvd", {{4}}},
+    {"zlib_dvd", {{1}}},
+    {"huff_dvd", {{6}}},
+    {"zstd_dvd", {{3}}}
 };
 
 // ============================================================================
@@ -813,22 +826,31 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Generate output reports
+    // Generate output reports with timestamp to avoid overwriting
     fs::create_directories(config.output_root);
 
+    auto now = std::chrono::system_clock::now();
+    auto now_t = std::chrono::system_clock::to_time_t(now);
+    char ts_buf[32];
+    std::strftime(ts_buf, sizeof(ts_buf), "%Y%m%d_%H%M%S", std::localtime(&now_t));
+    std::string ts(ts_buf);
+
     if (std::find(config.output_formats.begin(), config.output_formats.end(), "text") != config.output_formats.end()) {
-        generate_text_report(all_results, config.output_root / "benchmark_report.txt");
-        std::cout << "Generated: benchmark_report.txt\n";
+        auto fname = "benchmark_" + ts + ".txt";
+        generate_text_report(all_results, config.output_root / fname);
+        std::cout << "Generated: " << fname << "\n";
     }
 
     if (std::find(config.output_formats.begin(), config.output_formats.end(), "csv") != config.output_formats.end()) {
-        generate_csv_report(all_results, config.output_root / "benchmark_report.csv");
-        std::cout << "Generated: benchmark_report.csv\n";
+        auto fname = "benchmark_" + ts + ".csv";
+        generate_csv_report(all_results, config.output_root / fname);
+        std::cout << "Generated: " << fname << "\n";
     }
 
     if (std::find(config.output_formats.begin(), config.output_formats.end(), "json") != config.output_formats.end()) {
-        generate_json_report(all_results, config.output_root / "benchmark_report.json");
-        std::cout << "Generated: benchmark_report.json\n";
+        auto fname = "benchmark_" + ts + ".json";
+        generate_json_report(all_results, config.output_root / fname);
+        std::cout << "Generated: " << fname << "\n";
     }
 
     std::cout << "\nBenchmark complete!\n";

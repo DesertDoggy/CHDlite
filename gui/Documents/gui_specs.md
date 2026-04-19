@@ -359,13 +359,13 @@ void chdlite_free_json(char* json);
 
 ### Phase 2: CMake Integration (1 day)
 1. Update root `CMakeLists.txt` to build C wrapper as dynamic lib (.dylib/.dll/.so)
-2. Create `gui/flutter/macos/Runner.xcworkspace/CMakeLists.txt` → link dynamic lib
-3. Create `gui/flutter/windows/CMakeLists.txt` → link dynamic lib
-4. Create `gui/flutter/linux/CMakeLists.txt` → link dynamic lib
+2. Create `gui/app/macos/Runner.xcworkspace/CMakeLists.txt` → link dynamic lib
+3. Create `gui/app/windows/CMakeLists.txt` → link dynamic lib
+4. Create `gui/app/linux/CMakeLists.txt` → link dynamic lib
 5. Verify builds on all 3 platforms
 
 ### Phase 3: Flutter Project Setup (1 day)
-1. Create Flutter project at `gui/flutter/`
+1. Create Flutter project at `gui/app/`
 2. Set up `pubspec.yaml` with dependencies: `toml_dart`, `file_picker`, `path_provider`
 3. Create folder structure: lib/screens/, lib/widgets/, lib/services/
 4. Configure native plugin paths in Flutter build
@@ -449,7 +449,7 @@ dependencies:
 ## Deliverables
 
 1. **C Wrapper Library** — `src/c-wrapper/chdlite_c_wrapper.{h,cpp}`
-2. **Flutter App** — Complete `gui/flutter/` directory
+2. **Flutter App** — Complete `gui/app/` directory
 3. **CMakeLists.txt** — Updated for all platforms (macos, windows, linux)
 4. **Cross-platform Executables** — `chdlite-gui.app` (macOS), `chdlite-gui.exe` (Windows), `chdlite-gui` (Linux)
 5. **Installer/Package** — Platform-specific (DMG, MSI, AppImage)

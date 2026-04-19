@@ -80,3 +80,4 @@ build_msvc3.log
 /Release_msvc/bin
 /Release_msvc
 /Releases
+.DS_Store

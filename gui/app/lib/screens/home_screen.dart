@@ -327,7 +327,8 @@ class _HomeScreenState extends State<HomeScreen> {
             padding: const EdgeInsets.symmetric(vertical: 16),
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final iconSize = ((constraints.maxWidth - 16) / 4).clamp(120.0, 280.0);
+                // Keep 4 icons visually edge-to-edge while avoiding startup edge clipping.
+                final iconSize = ((constraints.maxWidth - 2) / 4).clamp(120.0, 480.0);
                 return Column(
                   children: [
                     Row(

@@ -26,12 +26,13 @@ This project incorporates code and concepts from the following open-source proje
 - **Hash** hashes CHD content by track, including cue/gdi(SHA-1, MD5, CRC32, SHA-256, XXH3)
 - **Extract** CHD to CUE/BIN, GDI, or raw image
 - **Create** CHD from CUE/BIN, GDI, ISO, or raw image 
-- **System detection**: PS1, PS2, PSP, Saturn, Mega CD, 3DO, Dreamcast (PC Engine detection is WIP)
+- **System detection**: PS1, PS2, PSP, Saturn, Mega CD, 3DO, Dreamcast
 - **Batch processing** — process multiple files and folders in one invocation
 - **chdman-compatible** commands for drop-in replacement workflows
-- **Usable as a C++ static library** in other projects
 
-- **Drag-and-drop** support — drop files or folders onto the binary **WIP For the moment Windows only
+- **Drag-and-drop** 
+Binary D&D Windows only.
+GUI - Mac,Linux,Windows
 
 ## Downloads
 

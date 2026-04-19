@@ -254,11 +254,11 @@ CHDLITE_API char* chdlite_hash(const char* chd_path, const char* algorithms)
             js << "{\"track\":" << t.track_number
                << ",\"type\":\"" << (t.is_audio ? "audio" : "data") << "\""
                << ",\"bytes\":" << t.data_bytes;
-            if (!t.sha1.empty())   js << ",\"sha1\":\"" << json_escape(t.sha1) << "\"";
-            if (!t.md5.empty())    js << ",\"md5\":\"" << json_escape(t.md5) << "\"";
-            if (!t.crc32.empty())  js << ",\"crc32\":\"" << json_escape(t.crc32) << "\"";
-            if (!t.sha256.empty()) js << ",\"sha256\":\"" << json_escape(t.sha256) << "\"";
-            if (!t.xxh3_128.empty()) js << ",\"xxh3\":\"" << json_escape(t.xxh3_128) << "\"";
+            if (!t.sha1.hex_string.empty())   js << ",\"sha1\":\"" << json_escape(t.sha1.hex_string) << "\"";
+            if (!t.md5.hex_string.empty())    js << ",\"md5\":\"" << json_escape(t.md5.hex_string) << "\"";
+            if (!t.crc32.hex_string.empty())  js << ",\"crc32\":\"" << json_escape(t.crc32.hex_string) << "\"";
+            if (!t.sha256.hex_string.empty()) js << ",\"sha256\":\"" << json_escape(t.sha256.hex_string) << "\"";
+            if (!t.xxh3_128.hex_string.empty()) js << ",\"xxh3\":\"" << json_escape(t.xxh3_128.hex_string) << "\"";
             js << "}";
         }
         js << "]"

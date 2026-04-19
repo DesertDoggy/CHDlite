@@ -1,8 +1,15 @@
 import 'package:flutter/material.dart';
+import '../services/operation_handler.dart';
+import '../services/settings_manager.dart';
 import '../widgets/drop_icon_button.dart';
 import '../widgets/output_display.dart';
 
 enum ChdOperation { read, compress, extract, hash }
+
+/// File extensions accepted per operation.
+const _chdExtensions = {'.chd'};
+const _sourceExtensions = {'.cue', '.bin', '.iso', '.gdi', '.toc', '.img', '.raw'};
+const _allDiscExtensions = {..._chdExtensions, ..._sourceExtensions};
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -15,36 +22,124 @@ class _HomeScreenState extends State<HomeScreen> {
   final List<String> _outputLines = [];
   double _progress = 0.0;
   bool _isProcessing = false;
+  final OperationHandler _handler = OperationHandler();
 
   void _onFilesDropped(ChdOperation operation, List<String> paths) {
+    final settings = SettingsManager.instance;
+
+    // Validate file types
+    final validPaths = <String>[];
+    final rejected = <String>[];
+    for (final p in paths) {
+      final ext = p.contains('.') ? '.${p.split('.').last.toLowerCase()}' : '';
+      switch (operation) {
+        case ChdOperation.read:
+        case ChdOperation.hash:
+        case ChdOperation.extract:
+          if (_chdExtensions.contains(ext)) {
+            validPaths.add(p);
+          } else {
+            rejected.add(p);
+          }
+        case ChdOperation.compress:
+          if (_sourceExtensions.contains(ext)) {
+            validPaths.add(p);
+          } else {
+            rejected.add(p);
+          }
+      }
+    }
+
     setState(() {
       _isProcessing = true;
       _progress = 0.0;
       _outputLines.clear();
-      _outputLines.add('Operation: ${operation.name}');
-      _outputLines.add('Files: ${paths.length}');
-      for (final path in paths) {
-        _outputLines.add('  $path');
-      }
-      _outputLines.add('');
-      _outputLines.add('Processing...');
     });
 
-    // TODO: Call CHDlite FFI here
-    // For now, simulate completion
-    Future.delayed(const Duration(seconds: 1), () {
-      if (mounted) {
-        setState(() {
-          _isProcessing = false;
-          _progress = 1.0;
-          _outputLines.add('Done. (FFI not yet connected)');
-        });
-      }
-    });
+    if (rejected.isNotEmpty) {
+      final expected = (operation == ChdOperation.compress)
+          ? _sourceExtensions.join(', ')
+          : '.chd';
+      setState(() {
+        for (final r in rejected) {
+          _outputLines.add('Skipped (wrong type): $r');
+        }
+        _outputLines.add('Expected: $expected');
+        _outputLines.add('');
+      });
+    }
+
+    if (validPaths.isEmpty) {
+      setState(() {
+        _isProcessing = false;
+        _outputLines.add('No valid files to process.');
+      });
+      return;
+    }
+
+    // Build options map from current settings
+    final options = <String, dynamic>{};
+
+    switch (operation) {
+      case ChdOperation.read:
+        break; // no extra options
+
+      case ChdOperation.hash:
+        final algos = settings.getList('hash.algorithms', ['sha1']);
+        options['algorithms'] = algos;
+
+      case ChdOperation.extract:
+        final outDir = settings.get('output.extract_output_dir', '');
+        if (outDir.isNotEmpty) options['output_dir'] = outDir;
+        options['split_bin'] = settings.getBool('extract.split_bin', true);
+
+      case ChdOperation.compress:
+        final outDir = settings.get('output.compress_output_dir', '');
+        if (outDir.isNotEmpty) options['output_path'] = outDir;
+
+        // Determine codec from comp/lite settings
+        final compCodec = settings.get('compress.comp_codec', 'best');
+        final liteCodec = settings.get('compress.lite_codec', 'auto');
+        if (compCodec == 'chdman') {
+          options['codec'] = 'chdman';
+        } else if (liteCodec == 'custom') {
+          final codecList = settings.get('compress.lite_codec_list', '');
+          if (codecList.isNotEmpty) options['codec'] = codecList;
+        }
+
+        final hunk = int.tryParse(settings.get('compress.hunk_size', '0')) ?? 0;
+        final unit = int.tryParse(settings.get('compress.unit_size', '0')) ?? 0;
+        final threads = int.tryParse(settings.get('compress.threads', '0')) ?? 0;
+        if (hunk > 0) options['hunk_size'] = hunk;
+        if (unit > 0) options['unit_size'] = unit;
+        if (threads > 0) options['threads'] = threads;
+    }
+
+    _handler.start(
+      operation: operation.name,
+      inputPaths: validPaths,
+      options: options,
+      onProgress: (p) {
+        if (mounted) setState(() => _progress = p);
+      },
+      onOutput: (line) {
+        if (mounted) {
+          setState(() => _outputLines.add(line));
+        }
+      },
+      onComplete: (success, error) {
+        if (mounted) {
+          setState(() {
+            _isProcessing = false;
+            _progress = success ? 1.0 : _progress;
+          });
+        }
+      },
+    );
   }
 
   void _onCancel() {
-    // TODO: Call chdlite_cancel_operation() via FFI
+    _handler.cancel();
     setState(() {
       _isProcessing = false;
       _outputLines.add('Cancelled by user.');

@@ -63,7 +63,14 @@ class _DropIconButtonState extends State<DropIconButton>
 
         if (widget.isProcessing) return;
 
-        final paths = details.files.map((f) => f.path).toList();
+        final paths = details.files.map((f) {
+          var p = f.path;
+          // macOS may provide file:// URIs — convert to plain path
+          if (p.startsWith('file://')) {
+            p = Uri.decodeFull(p.substring(7));
+          }
+          return p;
+        }).toList();
         if (paths.isNotEmpty) {
           widget.onFilesDropped(widget.operation, paths);
         }

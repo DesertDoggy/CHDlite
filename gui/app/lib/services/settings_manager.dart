@@ -28,7 +28,7 @@ class SettingsManager {
       _data['compress.hunk_size'] = '65536';
       _data['compress.unit_size'] = '2048';
       _data['compress.threads'] = '0';
-      _data['extract.split_bin'] = false;
+      _data['extract.split_bin'] = true;
       _data['result.format'] = 'text';
     }
   }

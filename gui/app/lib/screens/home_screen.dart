@@ -333,25 +333,25 @@ class _HomeScreenState extends State<HomeScreen> {
                   spacing: 0,
                   children: [
                     DropIconButton(
-                      assetPath: '../assets/CHD read Icon1.png',
+                      assetPath: 'assets/CHD read Icon1.png',
                       operation: ChdOperation.read,
                       onFilesDropped: _onFilesDropped,
                       isProcessing: _isProcessing,
                     ),
                     DropIconButton(
-                      assetPath: '../assets/CHDcomp Icon1.png',
+                      assetPath: 'assets/CHDcomp Icon1.png',
                       operation: ChdOperation.compress,
                       onFilesDropped: _onFilesDropped,
                       isProcessing: _isProcessing,
                     ),
                     DropIconButton(
-                      assetPath: '../assets/Groove-Title.png',
+                      assetPath: 'assets/Groove-Title.png',
                       operation: ChdOperation.extract,
                       onFilesDropped: _onFilesDropped,
                       isProcessing: _isProcessing,
                     ),
                     DropIconButton(
-                      assetPath: '../assets/CHD hash Icon1.png',
+                      assetPath: 'assets/CHD hash Icon1.png',
                       operation: ChdOperation.hash,
                       onFilesDropped: _onFilesDropped,
                       isProcessing: _isProcessing,

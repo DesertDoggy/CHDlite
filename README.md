@@ -74,8 +74,12 @@ CHDlite picks codecs automatically based on content type with priority on speed,
 | DVD — PS2 | `zlib` | Some Android PS2 emulators only support `zlib` for DVD CHDs. Using ZSTD would break compatibility on mobile. |
 | DVD — PSP / generic | `zstd` | Fast decompression, especially when hashing CHD contents — which requires reading and decompressing every hunk. |
 
-**`--best` preset**: `cdlz, cdzs, cdzl, cdfl` for CD / `zstd, lzma, zlib, huff` for DVD — maximises compression ratio at the cost of slower decompression. Use `chdcomp` binary for automatic `--best` compression.
+**`--best` preset**: `cdlz, cdzs, cdzl, cdfl` for CD / `zstd, lzma, zlib, huff` for DVD — maximises compression. slowest. Use `chdcomp` binary for automatic `--best` compression.
+**`-c chdman` preset**: chdman default`cdlz, cdzl, cdfl` for CD / `lzma, zlib, huff` -usually maximises compression.  slow but faster than --best.
 
+Single codec is faster than chdman due to simd optimization
+Multi codec is about 0-10% slower than chdman due to unknown bottleneck probably due to adding architecture changes for simultaneous hashing etc.
+If you have a preference for a codec, it is recommended to use single codec.
 
 > Compatibility tests are limited. If you experience any issues with certain emulators, reports will be appreciated.
 

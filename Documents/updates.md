@@ -32,6 +32,7 @@
 - Extend read to support non-CHD files (ISO images, CD images, etc.)
 - Terminology change: "system" → "platform" (detect_system → detect_game_platform)
 - `--best` compression preset for create command
+- `-c chdman` compression preset for create command
 - Default `-o` flags for auto-generated output paths
 - `verify`, `copy`, `dumpmeta` commands with full option support
 

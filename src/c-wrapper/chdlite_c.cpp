@@ -2,7 +2,9 @@
 // CHDlite - Cross-platform CHD library
 // chdlite_c.cpp - C wrapper implementation
 
+#ifndef CHDLITE_FFI_BUILD
 #define CHDLITE_FFI_BUILD
+#endif
 
 #include "chdlite_c.h"
 #include "chd_api.hpp"
@@ -10,6 +12,7 @@
 #include <atomic>
 #include <cctype>
 #include <filesystem>
+#include <array>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -197,6 +200,162 @@ static chdlite::Codec parse_codec(const std::string& name)
     if (name == "huffman") return C::Huffman;
     if (name == "avhuff")  return C::AVHUFF;
     return C::None;
+}
+
+static std::string trim_copy(std::string s)
+{
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
+    return s;
+}
+
+static std::string lower_copy(std::string s)
+{
+    for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+static std::string normalize_codec_arg(std::string s)
+{
+    s = lower_copy(trim_copy(s));
+    while (!s.empty() && s.front() == '-')
+        s.erase(s.begin());
+    return s;
+}
+
+static void clear_codecs(std::array<chdlite::Codec, 4>& codecs)
+{
+    codecs.fill(chdlite::Codec::None);
+}
+
+static bool parse_codec_list(const std::string& input, std::array<chdlite::Codec, 4>& codecs)
+{
+    clear_codecs(codecs);
+
+    std::istringstream ss(input);
+    std::string token;
+    int index = 0;
+    while (std::getline(ss, token, ',')) {
+        token = lower_copy(trim_copy(token));
+        if (token.empty())
+            continue;
+        if (token == "huff")
+            token = "huffman";
+        chdlite::Codec parsed = parse_codec(token);
+        if (parsed == chdlite::Codec::None)
+            return false;
+        if (index >= 4)
+            return false;
+        codecs[index++] = parsed;
+    }
+
+    return codecs[0] != chdlite::Codec::None;
+}
+
+static std::string codec_list_string(const std::array<chdlite::Codec, 4>& codecs)
+{
+    std::ostringstream out;
+    bool first = true;
+    for (chdlite::Codec codec : codecs) {
+        if (codec == chdlite::Codec::None)
+            continue;
+        if (!first)
+            out << ", ";
+        out << codec_name(codec);
+        first = false;
+    }
+    return first ? "none" : out.str();
+}
+
+static std::string detect_archive_format(const std::string& input_path, const chdlite::DetectionResult& detection)
+{
+    namespace fs = std::filesystem;
+
+    std::string ext = lower_copy(fs::path(input_path).extension().string());
+    if (ext == ".cue" || ext == ".gdi" || ext == ".toc" || ext == ".nrg")
+        return "cd";
+    if (ext == ".iso" || ext == ".bin" || ext == ".img")
+        return detection.format;
+    return "raw";
+}
+
+static std::array<chdlite::Codec, 4> default_codecs_for(const std::string& format)
+{
+    using C = chdlite::Codec;
+    if (format == "cd" || format == "gd")
+        return { C::CD_LZMA, C::CD_Zlib, C::CD_FLAC, C::None };
+    return { C::LZMA, C::Zlib, C::Huffman, C::FLAC };
+}
+
+static std::array<chdlite::Codec, 4> best_codecs_for(const std::string& format)
+{
+    using C = chdlite::Codec;
+    if (format == "cd" || format == "gd")
+        return { C::CD_LZMA, C::CD_Zstd, C::CD_Zlib, C::CD_FLAC };
+    if (format == "dvd")
+        return { C::Zstd, C::LZMA, C::Zlib, C::Huffman };
+    return default_codecs_for(format);
+}
+
+static std::array<chdlite::Codec, 4> smart_codecs_for(chdlite::GamePlatform platform,
+                                                       const std::string& format)
+{
+    using C = chdlite::Codec;
+    if (platform == chdlite::GamePlatform::PS2) {
+        if (format == "dvd")
+            return { C::Zlib, C::None, C::None, C::None };
+        return { C::CD_Zlib, C::CD_FLAC, C::None, C::None };
+    }
+    if (format == "dvd")
+        return { C::Zstd, C::None, C::None, C::None };
+    if (format == "cd" || format == "gd")
+        return { C::CD_Zstd, C::CD_FLAC, C::None, C::None };
+    return default_codecs_for(format);
+}
+
+struct CompressionSummary {
+    std::string mode;
+    std::string media;
+    std::string platform;
+    std::array<chdlite::Codec, 4> codecs;
+    bool show_detection = false;
+};
+
+static CompressionSummary build_compression_summary(const std::string& input_path,
+                                                    const chdlite::ArchiveOptions& options)
+{
+    CompressionSummary summary;
+    clear_codecs(summary.codecs);
+
+    bool need_detection = !options.best && !options.chdman_compat && !options.has_custom_compression();
+    chdlite::DetectionResult detection = need_detection
+        ? chdlite::detect_input(input_path, false)
+        : chdlite::DetectionResult{};
+
+    std::string format = detect_archive_format(input_path, detection);
+    std::string smart_format = lower_copy(std::filesystem::path(input_path).extension().string()) == ".gdi"
+        ? "gd"
+        : format;
+
+    if (options.best) {
+        summary.mode = "--best";
+        summary.codecs = best_codecs_for(smart_format);
+    } else if (options.chdman_compat) {
+        summary.mode = "--chdman";
+        summary.codecs = default_codecs_for(smart_format);
+    } else if (options.has_custom_compression()) {
+        summary.mode = "custom";
+        for (int i = 0; i < 4; i++)
+            summary.codecs[i] = options.compression[i];
+    } else {
+        summary.mode = "auto";
+        summary.show_detection = true;
+        summary.media = smart_format == "gd" ? "gdrom" : format;
+        summary.platform = chdlite::game_platform_name(detection.game_platform);
+        summary.codecs = smart_codecs_for(detection.game_platform, smart_format);
+    }
+
+    return summary;
 }
 
 static chdlite::HashFlags parse_hash_flags(const char* algorithms)
@@ -541,15 +700,73 @@ CHDLITE_API char* chdlite_compress(const char* input_path,
         std::string in = input_path ? input_path : "";
         in = resolve_sheet_for_bin(in);
 
+        // If the input is already a CHD, treat as extract instead of create.
+        if (chdlite::ChdReader::is_chd_file(in)) {
+            chdlite::ExtractOptions eopts;
+            if (output_path && *output_path) eopts.output_dir = output_path;
+            eopts.split_bin = false;
+            eopts.progress_callback = make_progress();
+            eopts.log_callback = make_log();
+
+            chdlite::ChdExtractor extractor;
+            auto eres = extractor.extract(in, eopts);
+            if (!eres.success)
+                return json_error(eres.error_message);
+
+            std::ostringstream efmt;
+            efmt << "Operation:    Extract (CHD input)\n";
+            efmt << "Output:       " << eres.output_path << "\n";
+            efmt << "Written:      " << big_int_string(eres.bytes_written) << " bytes\n";
+            efmt << "Type:         " << content_type_name(eres.detected_type) << "\n";
+            for (auto& f : eres.output_files)
+                efmt << "  " << f << "\n";
+
+            std::ostringstream ejs;
+            ejs << "{\"success\":true"
+                << ",\"operation\":\"extract\""
+                << ",\"output_path\":\"" << json_escape(eres.output_path) << "\""
+                << ",\"bytes_written\":" << eres.bytes_written
+                << ",\"detected_type\":\"" << content_type_name(eres.detected_type) << "\""
+                << ",\"codec_used\":\"extract\""
+                << ",\"formatted\":\"" << json_escape(efmt.str()) << "\""
+                << ",\"files\":[";
+            for (size_t i = 0; i < eres.output_files.size(); ++i) {
+                if (i) ejs << ",";
+                ejs << "\"" << json_escape(eres.output_files[i]) << "\"";
+            }
+            ejs << "]}";
+            return dup_str(ejs.str());
+        }
+
         chdlite::ArchiveOptions opts;
-        if (codec && *codec) {
-            opts.codec = parse_codec(codec);
+        std::string codec_arg = codec ? normalize_codec_arg(codec) : "";
+        std::array<chdlite::Codec, 4> custom_codecs{};
+        clear_codecs(custom_codecs);
+
+        if (!codec_arg.empty() && codec_arg != "auto") {
+            if (codec_arg == "best") {
+                opts.best = true;
+            } else if (codec_arg == "chdman") {
+                opts.chdman_compat = true;
+            } else if (codec_arg.find(',') != std::string::npos) {
+                if (!parse_codec_list(codec_arg, custom_codecs))
+                    return json_error("Invalid compression list. Use up to 4 codecs separated by commas.");
+                for (int i = 0; i < 4; i++)
+                    opts.compression[i] = custom_codecs[i];
+            } else {
+                chdlite::Codec parsed = parse_codec(codec_arg);
+                if (parsed == chdlite::Codec::None)
+                    return json_error("Unknown compression mode or codec");
+                opts.codec = parsed;
+            }
         }
         if (hunk_size > 0) opts.hunk_bytes = static_cast<uint32_t>(hunk_size);
         if (unit_size > 0) opts.unit_bytes = static_cast<uint32_t>(unit_size);
         if (threads > 0)   opts.num_processors = threads;
         opts.progress_callback = make_progress();
         opts.log_callback = make_log();
+
+        CompressionSummary summary = build_compression_summary(in, opts);
 
         std::string out;
         if (output_path && *output_path) {
@@ -568,6 +785,24 @@ CHDLITE_API char* chdlite_compress(const char* input_path,
         if (!result.success)
             return json_error(result.error_message);
 
+        std::ostringstream formatted;
+        formatted << "Output:       " << result.output_path << "\n";
+        if (summary.mode == "--best")
+            formatted << "Mode:         Create (--best)\n";
+        else if (summary.mode == "--chdman")
+            formatted << "Mode:         Create (--chdman)\n";
+        else if (summary.mode == "custom")
+            formatted << "Mode:         Create (custom codecs)\n";
+        else
+            formatted << "Mode:         Create (auto)\n";
+        if (summary.show_detection) {
+            formatted << "Detected Media:    " << summary.media << "\n";
+            formatted << "Detected Platform: " << summary.platform << "\n";
+        }
+        formatted << "Selected Codecs:   " << codec_list_string(summary.codecs) << "\n";
+        formatted << "Codec Used:        " << codec_name(result.codec_used) << "\n";
+        formatted << "Ratio:             " << result.compression_ratio;
+
         std::ostringstream js;
         js << "{\"success\":true"
            << ",\"output_path\":\"" << json_escape(result.output_path) << "\""
@@ -575,6 +810,11 @@ CHDLITE_API char* chdlite_compress(const char* input_path,
            << ",\"output_bytes\":" << result.output_bytes
            << ",\"compression_ratio\":" << result.compression_ratio
            << ",\"codec_used\":\"" << codec_name(result.codec_used) << "\""
+           << ",\"compression_mode\":\"" << json_escape(summary.mode) << "\""
+           << ",\"selected_codecs\":\"" << json_escape(codec_list_string(summary.codecs)) << "\""
+           << ",\"detected_media\":\"" << json_escape(summary.media) << "\""
+           << ",\"detected_platform\":\"" << json_escape(summary.platform) << "\""
+           << ",\"formatted\":\"" << json_escape(formatted.str()) << "\""
            << "}";
 
         return dup_str(js.str());

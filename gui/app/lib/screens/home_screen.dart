@@ -182,11 +182,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
         final compCodec = settings.get('compress.comp_codec', 'best');
         final liteCodec = settings.get('compress.lite_codec', 'auto');
-        if (compCodec == 'chdman') {
-          options['codec'] = 'chdman';
-        } else if (liteCodec == 'custom') {
+        if (liteCodec == 'custom') {
           final codecList = settings.get('compress.lite_codec_list', '');
           if (codecList.isNotEmpty) options['codec'] = codecList;
+        } else if (compCodec == 'chdman') {
+          options['codec'] = 'chdman';
+        } else if (compCodec == 'best') {
+          options['codec'] = 'best';
+        } else {
+          options['codec'] = 'auto';
         }
 
         final hunk = int.tryParse(settings.get('compress.hunk_size', '0')) ?? 0;

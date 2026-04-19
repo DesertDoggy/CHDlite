@@ -190,7 +190,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         Padding(
           padding: const EdgeInsets.only(left: 12, top: 4),
           child: Text(
-            'Outputs hash/read/comp/lite results and error log.',
+            'Outputs read/hash/create/extract results and the error log.',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
@@ -212,7 +212,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           onChanged: (v) => setState(() => _logHash = v!),
         ),
         CheckboxListTile(
-          title: const Text('Comp / Lite'),
+          title: const Text('Create / Extract'),
           dense: true,
           value: _logCompress,
           onChanged: (v) => setState(() => _logCompress = v!),
@@ -241,7 +241,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           onChanged: (v) => setState(() => _compCodec = v!),
         ),
         RadioListTile<String>(
-          title: const Text('chdman default (-c chdman)'),
+          title: const Text('chdman-compatible defaults (--chdman)'),
           value: 'chdman',
           groupValue: _compCodec,
           onChanged: (v) => setState(() => _compCodec = v!),
@@ -250,7 +250,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const Text('Lite (Fast)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
         RadioListTile<String>(
-          title: const Text('Auto (autodetect codec)'),
+          title: const Text('Auto (detect media/platform and choose codecs)'),
           value: 'auto',
           groupValue: _liteCodec,
           onChanged: (v) => setState(() => _liteCodec = v!),
@@ -267,7 +267,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             controller: _liteCodecListCtrl,
             decoration: const InputDecoration(
               labelText: 'Codec list',
-              helperText: 'Comma-separated: zstd,lzma,zlib,huff/flac',
+              helperText: 'Comma-separated, up to 4: zstd,lzma,zlib,huffman,flac',
               border: OutlineInputBorder(),
             ),
           ),

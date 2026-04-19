@@ -108,7 +108,7 @@ class OperationHandler {
     }
 
     final ver = ffi.version() ?? '?';
-    port.send(OutputLineMessage('CHDlite $ver — ${request.operation}'));
+  port.send(OutputLineMessage('CHDlite $ver — ${_displayOperationName(request.operation)}'));
 
     bool allOk = true;
     String? lastError;
@@ -170,6 +170,15 @@ class OperationHandler {
     port.send(CompletedMessage(success: allOk, error: lastError));
   }
 
+  static String _displayOperationName(String operation) {
+    switch (operation) {
+      case 'compress':
+        return 'create';
+      default:
+        return operation;
+    }
+  }
+
   static void _formatResult(
       SendPort port, String operation, Map<String, dynamic> result) {
     switch (operation) {
@@ -202,10 +211,17 @@ class OperationHandler {
         }
 
       case 'compress':
-        port.send(OutputLineMessage('Output: ${result['output_path']}'));
-        port.send(OutputLineMessage(
-            'Ratio: ${result['compression_ratio']}  '
-            'Codec: ${result['codec_used']}'));
+        final formatted = result['formatted'] as String? ?? '';
+        if (formatted.isNotEmpty) {
+          for (final line in formatted.split('\n')) {
+            if (line.isNotEmpty) port.send(OutputLineMessage(line));
+          }
+        } else {
+          port.send(OutputLineMessage('Output: ${result['output_path']}'));
+          port.send(OutputLineMessage(
+              'Ratio: ${result['compression_ratio']}  '
+              'Codec: ${result['codec_used']}'));
+        }
     }
   }
 }

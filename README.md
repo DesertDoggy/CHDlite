@@ -50,6 +50,8 @@ Each release contains four binaries:
 
 ## Usage
 
+Drag&Drop file, files, folder. (Windows tested.)
+
 ```
 chdlite <command> [options]
 ```

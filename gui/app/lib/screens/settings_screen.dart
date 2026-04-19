@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import '../services/settings_manager.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -128,6 +129,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SnackBar(content: Text('Settings saved'), duration: Duration(seconds: 1)),
       );
     }
+  }
+
+  Future<void> _pickDirectory(TextEditingController controller) async {
+    final selected = await FilePicker.platform.getDirectoryPath();
+    if (!mounted || selected == null || selected.isEmpty) return;
+    setState(() => controller.text = selected);
   }
 
   @override
@@ -373,7 +380,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         suffixIcon: IconButton(
           icon: const Icon(Icons.folder_open),
           onPressed: () async {
-            // TODO: Use file_picker to select directory
+            await _pickDirectory(ctrl);
           },
         ),
       ),

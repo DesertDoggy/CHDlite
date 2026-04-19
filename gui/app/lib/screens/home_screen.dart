@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import '../services/operation_handler.dart';
 import '../services/settings_manager.dart';
@@ -25,18 +27,18 @@ class _HomeScreenState extends State<HomeScreen> {
   final OperationHandler _handler = OperationHandler();
 
   void _onFilesDropped(ChdOperation operation, List<String> paths) {
+    _handleDropped(operation, paths);
+  }
+
+  Future<void> _handleDropped(ChdOperation operation, List<String> paths) async {
     final settings = SettingsManager.instance;
 
-    // Filter to known disc file extensions
-    final validPaths = paths.where((p) {
-      final ext = p.contains('.') ? '.${p.split('.').last.toLowerCase()}' : '';
-      return _allDiscExtensions.contains(ext);
-    }).toList();
+    // Accept dropped files and directories; expand directories recursively.
+    final validPaths = await _expandInputPaths(paths);
 
     if (validPaths.isEmpty) {
       setState(() {
-        _outputLines.add('No valid disc files.');
-        _outputLines.add('Supported: ${_allDiscExtensions.join(', ')}');
+        _outputLines.add('No input files.');
       });
       return;
     }
@@ -45,14 +47,13 @@ class _HomeScreenState extends State<HomeScreen> {
     if (operation == ChdOperation.compress) {
       final chdPaths =
           validPaths.where((p) => _chdExtensions.contains('.${p.split('.').last.toLowerCase()}')).toList();
-      final srcPaths =
-          validPaths.where((p) => _sourceExtensions.contains('.${p.split('.').last.toLowerCase()}')).toList();
+      final nonChdPaths = validPaths.where((p) => !chdPaths.contains(p)).toList();
 
-      if (chdPaths.isNotEmpty && srcPaths.isNotEmpty) {
+      if (chdPaths.isNotEmpty && nonChdPaths.isNotEmpty) {
         // Mixed: process extracts then compress separately
         _startOperation(ChdOperation.extract, chdPaths, settings);
         Future.delayed(const Duration(milliseconds: 300), () {
-          _startOperation(ChdOperation.compress, srcPaths, settings);
+          _startOperation(ChdOperation.compress, nonChdPaths, settings);
         });
         return;
       } else if (chdPaths.isNotEmpty) {
@@ -60,10 +61,43 @@ class _HomeScreenState extends State<HomeScreen> {
         _startOperation(ChdOperation.extract, chdPaths, settings);
         return;
       }
-      // All source files → compress (fall through)
+      // All non-CHD files → compress (fall through)
     }
 
     _startOperation(operation, validPaths, settings);
+  }
+
+  Future<List<String>> _expandInputPaths(List<String> paths) async {
+    final expanded = <String>[];
+    for (final raw in paths) {
+      final p = raw.trim();
+      if (p.isEmpty) continue;
+
+      final type = await FileSystemEntity.type(p, followLinks: true);
+      if (type == FileSystemEntityType.file) {
+        expanded.add(p);
+        continue;
+      }
+
+      if (type == FileSystemEntityType.directory) {
+        try {
+          await for (final entity
+              in Directory(p).list(recursive: true, followLinks: false)) {
+            if (entity is File) expanded.add(entity.path);
+          }
+        } catch (_) {
+          // Ignore unreadable directories and continue with remaining inputs.
+        }
+      }
+    }
+
+    // Deduplicate while preserving order.
+    final seen = <String>{};
+    final result = <String>[];
+    for (final p in expanded) {
+      if (seen.add(p)) result.add(p);
+    }
+    return result;
   }
 
   void _startOperation(

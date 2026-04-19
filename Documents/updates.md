@@ -49,3 +49,5 @@
 ### Bug Fixes
 - Added --version args.
 - Fixed version display to 0.2.1 (Was 0.1.0 in 0.2.0)
+- Fixed read not reading platform for ps1,ps2,pce chd.
+- Fixed read not checking magic sector for pce even on cue read.

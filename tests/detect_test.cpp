@@ -4,6 +4,7 @@
 #include "chd_reader.hpp"
 #include "detect_game_platform.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>

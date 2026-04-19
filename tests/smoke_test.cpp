@@ -3,6 +3,7 @@
 
 #include "chd_api.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>

@@ -4,6 +4,7 @@
 
 #include "chd_api.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>

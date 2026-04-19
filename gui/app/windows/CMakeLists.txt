@@ -57,6 +57,19 @@ add_subdirectory("runner")
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# === CHDlite FFI native library ===
+# Bundle pre-built chdlite_ffi.dll alongside the executable.
+# Build it first: cmake --build build --target chdlite_ffi (from project root)
+set(CHDLITE_FFI_DLL "${CMAKE_CURRENT_SOURCE_DIR}/runner/chdlite_ffi.dll")
+if(EXISTS "${CHDLITE_FFI_DLL}")
+  install(FILES "${CHDLITE_FFI_DLL}"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}"
+    COMPONENT Runtime)
+  message(STATUS "CHDlite FFI: bundling ${CHDLITE_FFI_DLL}")
+else()
+  message(WARNING "CHDlite FFI: chdlite_ffi.dll not found at ${CHDLITE_FFI_DLL} — GUI will run without native operations")
+endif()
+
 
 # === Installation ===
 # Support files are copied into place next to the executable, so that it can

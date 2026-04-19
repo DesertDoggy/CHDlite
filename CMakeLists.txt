@@ -371,6 +371,72 @@ install(FILES
 )
 
 # =====================================================================
+# CHDlite FFI shared library (C wrapper for Flutter / FFI consumers)
+# =====================================================================
+add_library(chdlite_ffi SHARED
+    src/c-wrapper/chdlite_c.cpp
+)
+target_include_directories(chdlite_ffi PRIVATE
+    src/chd-api
+    src/mame/util
+    src/mame/osd
+)
+target_link_libraries(chdlite_ffi PRIVATE chdlite)
+target_compile_definitions(chdlite_ffi PRIVATE CHDLITE_FFI_BUILD)
+set_target_properties(chdlite_ffi PROPERTIES
+    OUTPUT_NAME chdlite_ffi
+    C_VISIBILITY_PRESET hidden
+    CXX_VISIBILITY_PRESET hidden
+    POSITION_INDEPENDENT_CODE ON
+)
+if(APPLE)
+    set_target_properties(chdlite_ffi PROPERTIES
+        INSTALL_RPATH "@loader_path"
+        BUILD_RPATH "@loader_path"
+    )
+    # Self-sign for Gatekeeper
+    add_custom_command(TARGET chdlite_ffi POST_BUILD
+        COMMAND codesign -s - --force "$<TARGET_FILE:chdlite_ffi>"
+        COMMENT "Self-signing libchdlite_ffi.dylib"
+    )
+elseif(UNIX)
+    set_target_properties(chdlite_ffi PROPERTIES
+        INSTALL_RPATH "$ORIGIN"
+        BUILD_RPATH "$ORIGIN"
+    )
+endif()
+
+# Copy FFI lib to Flutter platform directories after build
+if(APPLE)
+    add_custom_command(TARGET chdlite_ffi POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${CMAKE_SOURCE_DIR}/gui/app/macos/Frameworks"
+        COMMAND ${CMAKE_COMMAND} -E copy
+            "$<TARGET_FILE:chdlite_ffi>"
+            "${CMAKE_SOURCE_DIR}/gui/app/macos/Frameworks/libchdlite_ffi.dylib"
+        COMMENT "Copying libchdlite_ffi.dylib to Flutter macos/Frameworks/"
+    )
+elseif(WIN32)
+    add_custom_command(TARGET chdlite_ffi POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${CMAKE_SOURCE_DIR}/gui/app/windows/runner"
+        COMMAND ${CMAKE_COMMAND} -E copy
+            "$<TARGET_FILE:chdlite_ffi>"
+            "${CMAKE_SOURCE_DIR}/gui/app/windows/runner/chdlite_ffi.dll"
+        COMMENT "Copying chdlite_ffi.dll to Flutter windows/runner/"
+    )
+else()
+    add_custom_command(TARGET chdlite_ffi POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${CMAKE_SOURCE_DIR}/gui/app/linux/lib"
+        COMMAND ${CMAKE_COMMAND} -E copy
+            "$<TARGET_FILE:chdlite_ffi>"
+            "${CMAKE_SOURCE_DIR}/gui/app/linux/lib/libchdlite_ffi.so"
+        COMMENT "Copying libchdlite_ffi.so to Flutter linux/lib/"
+    )
+endif()
+
+# =====================================================================
 # Only build tests and CLI when this is the top-level project
 # (skip when pulled in via add_subdirectory)
 # =====================================================================

@@ -131,17 +131,17 @@ public:
             if (pos != std::string::npos)
                 m_cur_bin_name.replace(pos, 2, tbuf);
         }
-        else if (!m_split_bin && !m_gdi_mode)
-        {
-            // Single bin file for all tracks
-            m_cur_bin_name = m_stem + ".bin";
-        }
         else if (m_num_tracks == 1 && !m_gdi_mode)
         {
             if (m_cue_style == CueStyle::Chdman)
                 m_cur_bin_name = m_stem + " (Track 1).bin";
             else
                 m_cur_bin_name = m_stem + ".bin";
+        }
+        else if (!m_split_bin && !m_gdi_mode)
+        {
+            // Single bin file for all tracks
+            m_cur_bin_name = m_stem + ".bin";
         }
         else if (m_gdi_mode)
         {

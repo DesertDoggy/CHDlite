@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:isolate';
+import 'dart:math' as math;
 import 'chdlite_ffi.dart';
 
 /// Messages sent from the background isolate to the UI.
@@ -108,13 +109,45 @@ class OperationHandler {
     }
 
     final ver = ffi.version() ?? '?';
-  port.send(OutputLineMessage('CHDlite $ver — ${_displayOperationName(request.operation)}'));
+    port.send(OutputLineMessage('CHDlite $ver — ${_displayOperationName(request.operation)}'));
+
+    var currentFileIndex = 0;
+    final totalFiles = request.inputPaths.isEmpty ? 1 : request.inputPaths.length;
+    var lastProgressEmitMs = 0;
+
+    ffi.installLogCallback((level, message) {
+      if (message.trim().isEmpty) return;
+      port.send(OutputLineMessage(message));
+    });
+
+    ffi.installProgressCallback((current, total) {
+      if (total <= 0) return;
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      if (nowMs - lastProgressEmitMs < 120 && current < total) return;
+      lastProgressEmitMs = nowMs;
+      final fileProgress = (current / total).clamp(0.0, 1.0);
+      final overall = ((currentFileIndex - 1) + fileProgress) / totalFiles;
+      port.send(ProgressMessage(math.max(0.0, math.min(1.0, overall))));
+      port.send(OutputLineMessage(
+          'Progress: ${(fileProgress * 100).toStringAsFixed(1)}%  File $currentFileIndex/$totalFiles'));
+    });
 
     bool allOk = true;
     String? lastError;
 
     for (final path in request.inputPaths) {
+      currentFileIndex += 1;
       port.send(OutputLineMessage('Processing: $path'));
+      switch (request.operation) {
+        case 'hash':
+          port.send(OutputLineMessage('Hashing...'));
+        case 'extract':
+          port.send(OutputLineMessage('Extracting...'));
+        case 'compress':
+          port.send(OutputLineMessage('Compressing...'));
+        default:
+          break;
+      }
 
       String? json;
       switch (request.operation) {
@@ -139,7 +172,8 @@ class OperationHandler {
           final unitSize = (request.options['unit_size'] as int?) ?? 0;
           final threads = (request.options['threads'] as int?) ?? 0;
           final cueStyle = (request.options['cue_style'] as int?) ?? 0;
-          json = ffi.compress(path, outputPath, codec, hunkSize, unitSize, threads, cueStyle);
+          final splitBin = (request.options['split_bin'] as bool?) ?? true;
+          json = ffi.compress(path, outputPath, codec, hunkSize, unitSize, threads, cueStyle, splitBin);
       }
 
       if (json == null) {
@@ -167,6 +201,9 @@ class OperationHandler {
         port.send(OutputLineMessage(json));
       }
     }
+
+    ffi.clearProgressCallback();
+    ffi.clearLogCallback();
 
     port.send(OutputLineMessage(allOk ? 'Done.' : 'Completed with errors.'));
     port.send(CompletedMessage(success: allOk, error: lastError));

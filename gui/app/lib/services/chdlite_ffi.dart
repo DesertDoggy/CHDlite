@@ -19,7 +19,8 @@ typedef _ExtractNative = Pointer<Utf8> Function(
   Pointer<Utf8> chdPath, Pointer<Utf8> outputDir, Int32 splitBin, Int32 cueStyle);
 typedef _CompressNative = Pointer<Utf8> Function(
     Pointer<Utf8> inputPath, Pointer<Utf8> outputPath, Pointer<Utf8> codec,
-  Int32 hunkSize, Int32 unitSize, Int32 threads, Int32 cueStyle);
+  Int32 hunkSize, Int32 unitSize, Int32 threads, Int32 cueStyle,
+  Int32 splitBin);
 typedef _FreeNative = Void Function(Pointer<Utf8> ptr);
 typedef _CancelNative = Void Function();
 typedef _VersionNative = Pointer<Utf8> Function();
@@ -42,7 +43,7 @@ typedef _ExtractDart = Pointer<Utf8> Function(
   Pointer<Utf8> chdPath, Pointer<Utf8> outputDir, int splitBin, int cueStyle);
 typedef _CompressDart = Pointer<Utf8> Function(
     Pointer<Utf8> inputPath, Pointer<Utf8> outputPath, Pointer<Utf8> codec,
-  int hunkSize, int unitSize, int threads, int cueStyle);
+  int hunkSize, int unitSize, int threads, int cueStyle, int splitBin);
 typedef _FreeDart = void Function(Pointer<Utf8> ptr);
 typedef _CancelDart = void Function();
 typedef _VersionDart = Pointer<Utf8> Function();
@@ -66,6 +67,8 @@ class ChdliteFfi {
   late final _VersionDart _version;
   late final _SetProgressDart _setProgress;
   late final _SetLogDart _setLog;
+  NativeCallable<_ProgressCallbackNative>? _progressCallable;
+  NativeCallable<_LogCallbackNative>? _logCallable;
 
   ChdliteFfi._();
 
@@ -171,13 +174,13 @@ class ChdliteFfi {
 
   /// Compress input to CHD. Returns JSON string.
   String? compress(String inputPath, String outputPath, String codec,
-      int hunkSize, int unitSize, int threads, int cueStyle) {
+      int hunkSize, int unitSize, int threads, int cueStyle, bool splitBin) {
     if (!_loaded) return null;
     final inPtr = inputPath.toNativeUtf8();
     final outPtr = outputPath.toNativeUtf8();
     final codecPtr = codec.toNativeUtf8();
     final resultPtr =
-      _compress(inPtr, outPtr, codecPtr, hunkSize, unitSize, threads, cueStyle);
+      _compress(inPtr, outPtr, codecPtr, hunkSize, unitSize, threads, cueStyle, splitBin ? 1 : 0);
     malloc.free(inPtr);
     malloc.free(outPtr);
     malloc.free(codecPtr);
@@ -208,10 +211,25 @@ class ChdliteFfi {
     _setProgress(cb);
   }
 
+  void installProgressCallback(void Function(int current, int total) onProgress) {
+    if (!_loaded) return;
+    _progressCallable?.close();
+    _progressCallable = NativeCallable<_ProgressCallbackNative>.isolateLocal(
+      (current, total) {
+        onProgress(current, total);
+        return 1;
+      },
+      exceptionalReturn: 0,
+    );
+    _setProgress(_progressCallable!.nativeFunction);
+  }
+
   /// Clear progress callback.
   void clearProgressCallback() {
     if (!_loaded) return;
     _setProgress(nullptr);
+    _progressCallable?.close();
+    _progressCallable = null;
   }
 
   /// Set log callback (must be a static/top-level function).
@@ -220,9 +238,20 @@ class ChdliteFfi {
     _setLog(cb);
   }
 
+  void installLogCallback(void Function(int level, String message) onLog) {
+    if (!_loaded) return;
+    _logCallable?.close();
+    _logCallable = NativeCallable<_LogCallbackNative>.listener((level, msg) {
+      onLog(level, msg == nullptr ? '' : msg.toDartString());
+    });
+    _setLog(_logCallable!.nativeFunction);
+  }
+
   /// Clear log callback.
   void clearLogCallback() {
     if (!_loaded) return;
     _setLog(nullptr);
+    _logCallable?.close();
+    _logCallable = null;
   }
 }

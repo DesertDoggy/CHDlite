@@ -705,7 +705,8 @@ CHDLITE_API char* chdlite_compress(const char* input_path,
                                    int hunk_size,
                                    int unit_size,
                                    int threads,
-                                   int cue_style)
+                                   int cue_style,
+                                   int split_bin)
 {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_cancel.store(false);
@@ -719,10 +720,12 @@ CHDLITE_API char* chdlite_compress(const char* input_path,
             chdlite::FrontendExtractOptions eopts;
             eopts.input_path = in;
             if (output_path && *output_path) eopts.output_path = output_path;
-            eopts.split_bin = false;
+            eopts.split_bin = (split_bin != 0);
             eopts.cue_style = parse_cue_style_int(cue_style);
             eopts.progress_callback = make_progress();
             eopts.log_callback = make_log();
+
+            if (g_log_cb) g_log_cb(static_cast<int>(chdlite::LogLevel::Info), "Operation: Extract");
 
             auto front = chdlite::run_frontend_extract(eopts);
             if (!front.success)
@@ -756,6 +759,8 @@ CHDLITE_API char* chdlite_compress(const char* input_path,
 
         std::string codec_arg = codec ? normalize_codec_arg(codec) : "";
 
+        if (g_log_cb) g_log_cb(static_cast<int>(chdlite::LogLevel::Info), "Operation: Create");
+
         chdlite::FrontendCreateOptions copts;
         copts.input_path = in;
         if (output_path && *output_path) copts.output_path = output_path;
@@ -780,6 +785,21 @@ CHDLITE_API char* chdlite_compress(const char* input_path,
                 return json_error(cerr);
         }
         CompressionSummary summary = build_compression_summary(in, summary_opts);
+        if (g_log_cb) {
+            std::string mode = (summary.mode == "--best") ? "Compression mode: --best"
+                              : (summary.mode == "--chdman") ? "Compression mode: --chdman"
+                              : (summary.mode == "custom") ? "Compression mode: custom"
+                              : "Compression mode: auto";
+            g_log_cb(static_cast<int>(chdlite::LogLevel::Info), mode.c_str());
+            std::string chosen = std::string("Selected codecs: ") + codec_list_string(summary.codecs);
+            g_log_cb(static_cast<int>(chdlite::LogLevel::Info), chosen.c_str());
+            if (summary.show_detection) {
+                std::string media = std::string("Detected media: ") + summary.media;
+                std::string platform = std::string("Detected platform: ") + summary.platform;
+                g_log_cb(static_cast<int>(chdlite::LogLevel::Info), media.c_str());
+                g_log_cb(static_cast<int>(chdlite::LogLevel::Info), platform.c_str());
+            }
+        }
 
         auto front = chdlite::run_frontend_create(copts);
         if (!front.success)

@@ -72,13 +72,15 @@ CHDLITE_API char* chdlite_extract(const char* chd_path,
 /// @param unit_size    Unit size in bytes (0 = auto).
 /// @param threads      Number of threads (0 = auto).
 /// @param cue_style    For CHD input (extract path): 0=chdman 1=redump 2=redump+catalog.
+/// @param split_bin    For CHD input (extract path): 1=per-track BIN, 0=single BIN.
 CHDLITE_API char* chdlite_compress(const char* input_path,
                                    const char* output_path,
                                    const char* codec,
                                    int hunk_size,
                                    int unit_size,
                                    int threads,
-                                   int cue_style);
+                                   int cue_style,
+                                   int split_bin);
 
 /// Free a string returned by any chdlite_* function.
 CHDLITE_API void chdlite_free(char* ptr);

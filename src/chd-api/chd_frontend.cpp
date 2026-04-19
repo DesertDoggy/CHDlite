@@ -2,6 +2,7 @@
 
 #include "chd_frontend.hpp"
 #include "chd_reader.hpp"
+#include "cdrom.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -174,6 +175,17 @@ FrontendCreateResult run_frontend_create(const FrontendCreateOptions& options)
 
         out.resolved_output = resolve_create_output(options.input_path, options.output_path);
         compute_auto_compression_plan(options.input_path, out.detected_media, out.detected_platform, out.selected_codecs);
+
+        // CD/GD creation requires hunk alignment to frame size. Legacy GUI settings
+        // like 65536 can fail with "Invalid argument" for CUE/GDI inputs.
+        if (opts.hunk_bytes > 0 && (out.detected_media == "cd" || out.detected_media == "gd")) {
+            if (opts.hunk_bytes % cdrom_file::FRAME_SIZE != 0) {
+                opts.hunk_bytes = 0; // auto
+                if (options.log_callback)
+                    options.log_callback(LogLevel::Warning,
+                        "Invalid CD/GD hunk size detected; falling back to auto hunk size");
+            }
+        }
 
         ChdArchiver archiver;
         out.archive = archiver.archive(options.input_path, out.resolved_output, opts);

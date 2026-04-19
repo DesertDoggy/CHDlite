@@ -209,6 +209,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final hunk = int.tryParse(settings.get('compress.hunk_size', '0')) ?? 0;
         final unit = int.tryParse(settings.get('compress.unit_size', '0')) ?? 0;
         final threads = int.tryParse(settings.get('compress.threads', '0')) ?? 0;
+        options['split_bin'] = settings.getBool('extract.split_bin', true);
         options['cue_style'] = cueStyleToInt(settings.get('extract.cue_style', 'chdman'));
         if (hunk > 0) options['hunk_size'] = hunk;
         if (unit > 0) options['unit_size'] = unit;

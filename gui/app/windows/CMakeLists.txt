@@ -59,15 +59,28 @@ include(flutter/generated_plugins.cmake)
 
 # === CHDlite FFI native library ===
 # Bundle pre-built chdlite_ffi.dll alongside the executable.
-# Build it first: cmake --build build --target chdlite_ffi (from project root)
-set(CHDLITE_FFI_DLL "${CMAKE_CURRENT_SOURCE_DIR}/runner/chdlite_ffi.dll")
-if(EXISTS "${CHDLITE_FFI_DLL}")
+# Build it first (project root): .\build.ps1 -Compiler msvc
+set(CHDLITE_FFI_DLL_CANDIDATES
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../../Release_msvc/bin/chdlite_ffi.dll"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../../Release/bin/chdlite_ffi.dll"
+  "${CMAKE_CURRENT_SOURCE_DIR}/runner/chdlite_ffi.dll"
+)
+
+set(CHDLITE_FFI_DLL "")
+foreach(candidate ${CHDLITE_FFI_DLL_CANDIDATES})
+  if(EXISTS "${candidate}")
+    set(CHDLITE_FFI_DLL "${candidate}")
+    break()
+  endif()
+endforeach()
+
+if(CHDLITE_FFI_DLL)
   install(FILES "${CHDLITE_FFI_DLL}"
     DESTINATION "${CMAKE_INSTALL_PREFIX}"
     COMPONENT Runtime)
   message(STATUS "CHDlite FFI: bundling ${CHDLITE_FFI_DLL}")
 else()
-  message(WARNING "CHDlite FFI: chdlite_ffi.dll not found at ${CHDLITE_FFI_DLL} — GUI will run without native operations")
+  message(WARNING "CHDlite FFI: chdlite_ffi.dll not found in expected locations (Release_msvc/bin, Release/bin, windows/runner) — GUI will run without native operations")
 endif()
 
 

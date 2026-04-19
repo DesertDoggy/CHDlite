@@ -41,7 +41,7 @@
 ## v0.2.1
 
 ### New binaries
-- Added D&D GUI App for Mac, Linux
+- Added D&D GUI App for Mac, Linux, Windows
 
 ### Features
 - Added function to take dir for -o and create output files with same name as input file.

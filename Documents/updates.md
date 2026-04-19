@@ -45,6 +45,7 @@
 
 ### Features
 - Added function to take dir for -o and create output files with same name as input file.
+- Default auto codec selection (smart default) now displays media type, platform and chosen codec. on compression.
 
 ### Bug Fixes
 - Added --version args.

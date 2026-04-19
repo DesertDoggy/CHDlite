@@ -64,7 +64,6 @@ chdlite <command> [options]
 ```
 GUI
 Drag&Drop
-Mac.
 ```
 ### Generic commands
 

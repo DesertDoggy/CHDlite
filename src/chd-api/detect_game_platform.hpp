@@ -46,6 +46,7 @@ struct DetectionResult
     // In strict mode the archiver will throw ChdFormatException instead of guessing.
     bool            format_conflict  = false;
     std::string     format_conflict_detail; // human-readable description of the conflict
+    std::string     detection_source; // debug: where platform was read from (e.g. "Track 1 (Data), LBA 1" for PC Engine)
 };
 
 // Info about the input disc layout (for raw file detection)

@@ -655,6 +655,8 @@ static int cmd_read(const Args& args)
             std::printf("Title:        %s\n", det.title.empty() ? "N/A" : det.title.c_str());
             std::printf("Manufacturer ID: %s\n", det.manufacturer_id.empty() ? "N/A" : det.manufacturer_id.c_str());
         }
+        if (!det.detection_source.empty())
+            std::printf("Detection:    %s\n", det.detection_source.c_str());
         log_debug("detect: format-source=" + std::string(format_source_name(det.format_source))
             + " platform=" + game_platform_name(det.game_platform)
             + " platform-source=" + platform_source_name(det.platform_source));
@@ -716,6 +718,8 @@ static int cmd_read(const Args& args)
         std::printf("Title:        %s\n", det.title.empty() ? "N/A" : det.title.c_str());
         std::printf("Manufacturer ID: %s\n", det.manufacturer_id.empty() ? "N/A" : det.manufacturer_id.c_str());
     }
+    if (!det.detection_source.empty())
+        std::printf("Detection:    %s\n", det.detection_source.c_str());
 
     // Raw metadata dump (verbose only) — enumerate all known tags
     if (args.verbose)

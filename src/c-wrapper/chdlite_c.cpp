@@ -8,9 +8,11 @@
 #include "chd_api.hpp"
 
 #include <atomic>
+#include <cctype>
 #include <filesystem>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -139,6 +141,48 @@ static const char* content_type_name(chdlite::ContentType t)
     return "unknown";
 }
 
+// If input is a .bin that is referenced by a sibling .cue/.gdi,
+// prefer the sheet path for archive creation (CLI-compatible behavior).
+static std::string resolve_sheet_for_bin(const std::string& input_path)
+{
+    namespace fs = std::filesystem;
+
+    fs::path p(input_path);
+    std::string ext = p.extension().string();
+    for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (ext != ".bin")
+        return input_path;
+
+    std::string bin_name = p.filename().string();
+    std::string bin_name_lower = bin_name;
+    for (auto& c : bin_name_lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    std::error_code ec;
+    fs::path dir = p.parent_path();
+    if (!fs::exists(dir, ec) || ec)
+        return input_path;
+
+    for (auto& e : fs::directory_iterator(dir, ec)) {
+        if (ec) break;
+        std::string sext = e.path().extension().string();
+        for (auto& c : sext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (sext != ".cue" && sext != ".gdi") continue;
+
+        std::ifstream sf(e.path().string());
+        if (!sf.good()) continue;
+
+        std::string line;
+        while (std::getline(sf, line)) {
+            std::string lower = line;
+            for (auto& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (lower.find(bin_name_lower) != std::string::npos)
+                return e.path().string();
+        }
+    }
+
+    return input_path;
+}
+
 static chdlite::Codec parse_codec(const std::string& name)
 {
     using C = chdlite::Codec;
@@ -233,6 +277,8 @@ CHDLITE_API char* chdlite_read(const char* chd_path)
                 fmt << "Title:        " << (det.title.empty() ? "N/A" : det.title) << "\n";
                 fmt << "Manufacturer ID: " << (det.manufacturer_id.empty() ? "N/A" : det.manufacturer_id) << "\n";
             }
+            if (!det.detection_source.empty())
+                fmt << "Detection:    " << det.detection_source << "\n";
 
             std::ostringstream js;
             js << "{\"success\":true"
@@ -242,6 +288,7 @@ CHDLITE_API char* chdlite_read(const char* chd_path)
                << ",\"platform\":\"" << json_escape(chdlite::game_platform_name(det.game_platform)) << "\""
                << ",\"title\":\"" << json_escape(det.title) << "\""
                << ",\"manufacturer_id\":\"" << json_escape(det.manufacturer_id) << "\""
+               << ",\"detection_source\":\"" << json_escape(det.detection_source) << "\""
                << ",\"formatted\":\"" << json_escape(fmt.str()) << "\""
                << "}";
 
@@ -306,6 +353,8 @@ CHDLITE_API char* chdlite_read(const char* chd_path)
             fmt << "Title:        " << (det.title.empty() ? "N/A" : det.title) << "\n";
             fmt << "Manufacturer ID: " << (det.manufacturer_id.empty() ? "N/A" : det.manufacturer_id) << "\n";
         }
+        if (!det.detection_source.empty())
+            fmt << "Detection:    " << det.detection_source << "\n";
 
         std::ostringstream js;
         js << "{\"success\":true"
@@ -332,6 +381,7 @@ CHDLITE_API char* chdlite_read(const char* chd_path)
            << ",\"platform\":\"" << json_escape(chdlite::game_platform_name(det.game_platform)) << "\""
            << ",\"title\":\"" << json_escape(det.title) << "\""
            << ",\"manufacturer_id\":\"" << json_escape(det.manufacturer_id) << "\""
+           << ",\"detection_source\":\"" << json_escape(det.detection_source) << "\""
            << ",\"formatted\":\"" << json_escape(fmt.str()) << "\""
            << "}";
         return dup_str(js.str());
@@ -488,6 +538,9 @@ CHDLITE_API char* chdlite_compress(const char* input_path,
     g_cancel.store(false);
 
     try {
+        std::string in = input_path ? input_path : "";
+        in = resolve_sheet_for_bin(in);
+
         chdlite::ArchiveOptions opts;
         if (codec && *codec) {
             opts.codec = parse_codec(codec);
@@ -503,14 +556,14 @@ CHDLITE_API char* chdlite_compress(const char* input_path,
             out = output_path;
         } else {
             // Default: same name with .chd extension
-            out = input_path;
+            out = in;
             auto dot = out.rfind('.');
             if (dot != std::string::npos) out = out.substr(0, dot);
             out += ".chd";
         }
 
         chdlite::ChdArchiver archiver;
-        auto result = archiver.archive(input_path, out, opts);
+        auto result = archiver.archive(in, out, opts);
 
         if (!result.success)
             return json_error(result.error_message);

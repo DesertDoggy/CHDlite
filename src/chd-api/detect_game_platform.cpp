@@ -11,6 +11,7 @@
 #include <cctype>
 #include <cstring>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -314,50 +315,97 @@ static GamePlatform check_dvd_video(const SectorReader& read_sector, const Iso96
 
 // ======================> PC Engine CD heuristic
 
-static GamePlatform check_pcengine(const SectorReader& read_sector, const std::vector<TrackInfo>& tracks)
+static GamePlatform check_pcengine(const SectorReader& read_sector, const std::vector<TrackInfo>& tracks,
+                                    std::string& out_source)
 {
-    // PC Engine CD: Track 1 = Audio, Track 2 = Data
-    if (tracks.size() < 2)
-        return GamePlatform::Unknown;
-    if (!tracks[0].is_audio)
-        return GamePlatform::Unknown;
-    if (tracks[1].is_audio)
-        return GamePlatform::Unknown;
+    auto pce_magic_preview = [](const uint8_t* sector) -> std::string {
+        std::string s;
+        s.reserve(23);
+        for (int i = 0; i < 23; ++i) {
+            unsigned char c = sector[32 + i];
+            s.push_back((c >= 32 && c <= 126) ? char(c) : '.');
+        }
+        return s;
+    };
 
-    uint32_t data_lba = tracks[1].start_lba;
-    uint8_t sector[2048];
+    auto looks_like_pce_ipl = [](const uint8_t* sector) -> bool {
+        // Primary check: IPL header magic at byte 32
+        // http://shu.sheldows.com/shu/download/pcedocs/pce_cdrom.html
+        if (std::memcmp("PC Engine CD-ROM SYSTEM", &sector[32], 23) == 0)
+            return true;
 
-    if (!read_sector(data_lba + 1, sector))
-        return GamePlatform::Unknown;
+        // Fallback heuristic: validate IPL header fields
+        uint8_t  iplbln = sector[0x03];
+        uint16_t iplsta = read_le16(&sector[0x04]);
+        uint16_t ipljmp = read_le16(&sector[0x06]);
 
-    // Primary check: IPL header magic at byte 32
-    // http://shu.sheldows.com/shu/download/pcedocs/pce_cdrom.html
-    if (std::memcmp("PC Engine CD-ROM SYSTEM", &sector[32], 23) == 0)
-        return GamePlatform::PCEngine;
+        if (iplbln == 0) return false;
+        if (iplsta < 0x2000) return false;
+        if (ipljmp == 0) return false;
+        for (int i = 0; i < 5; i++) {
+            if (sector[0x08 + i] > 0x7F)
+                return false;
+        }
+        return true;
+    };
 
-    // Fallback heuristic: validate IPL header fields
-    uint8_t  iplbln = sector[0x03];
-    uint16_t iplsta = read_le16(&sector[0x04]);
-    uint16_t ipljmp = read_le16(&sector[0x06]);
-
-    if (iplbln == 0)
-        return GamePlatform::Unknown;
-    if (iplsta < 0x2000)
-        return GamePlatform::Unknown;
-    if (ipljmp == 0)
-        return GamePlatform::Unknown;
-
-    for (int i = 0; i < 5; i++) {
-        if (sector[0x08 + i] > 0x7F)
-            return GamePlatform::Unknown;
+    // Prefer first data track from TOC when available.
+    // For single-file BIN/CHD without full track layout, fall back to LBA 0 probing.
+    std::vector<uint32_t> base_lbas;
+    std::vector<std::string> base_labels;
+    std::ostringstream dbg;
+    dbg << "PCE probe:";
+    for (const auto& t : tracks) {
+        if (!t.is_audio) {
+            base_lbas.push_back(t.start_lba);
+            base_labels.push_back("Track " + std::to_string(t.track_number) + " (Data)");
+        }
+    }
+    if (base_lbas.empty()) {
+        base_lbas.push_back(0);
+        base_labels.push_back("LBA 0");
+        dbg << " no data tracks; fallback to LBA 0.";
     }
 
-    return GamePlatform::PCEngine;
+    uint8_t sector[2048];
+    for (size_t i = 0; i < base_lbas.size(); ++i) {
+        uint32_t base_lba = base_lbas[i];
+        const std::string& label = base_labels[i];
+
+        // Typical IPL location is the second logical sector of the data track.
+        bool ok = read_sector(base_lba + 1, sector);
+        if (ok) {
+            std::string preview = pce_magic_preview(sector);
+            bool match = looks_like_pce_ipl(sector);
+            dbg << " [" << label << " @LBA " << (base_lba + 1)
+                << " ok magic='" << preview << "' match=" << (match ? "yes" : "no") << "]";
+            if (match) {
+                out_source = label + ", LBA " + std::to_string(base_lba + 1) + ", magic='" + preview + "'";
+                return GamePlatform::PCEngine;
+            }
+        } else {
+            dbg << " [" << label << " @LBA " << (base_lba + 1) << " read-failed]";
+        }
+
+        // Some dumps/containers align differently; probe track start as fallback.
+        ok = read_sector(base_lba, sector);
+        if (ok) {
+            std::string preview = pce_magic_preview(sector);
+            bool match = looks_like_pce_ipl(sector);
+            dbg << " [" << label << " @LBA " << base_lba
+                << " ok magic='" << preview << "' match=" << (match ? "yes" : "no") << "]";
+            if (match) {
+                out_source = label + ", LBA " + std::to_string(base_lba) + ", magic='" + preview + "'";
+                return GamePlatform::PCEngine;
+            }
+        } else {
+            dbg << " [" << label << " @LBA " << base_lba << " read-failed]";
+        }
+    }
+
+    out_source = dbg.str();
+    return GamePlatform::Unknown;
 }
-
-// ======================> Title extraction
-
-// Trim trailing whitespace/nulls
 static std::string trim_right(const std::string& s)
 {
     auto end = s.find_last_not_of(" \t\r\n\0");
@@ -809,7 +857,9 @@ DetectionResult detect_game_platform(const SectorReader& read_sector,
 
             // --- Loop 3: PC Engine heuristic (after all other checks) ---
             if (has_detect_flag(flags, DetectFlags::Heuristic)) {
-                GamePlatform sys = check_pcengine(read_sector, tracks);
+                std::string pc_engine_source;
+                GamePlatform sys = check_pcengine(read_sector, tracks, pc_engine_source);
+                result.detection_source = pc_engine_source;
                 if (sys != GamePlatform::Unknown) {
                     result.game_platform   = sys;
                     result.platform_source = PlatformSource::Heuristic;
@@ -844,7 +894,15 @@ DetectionResult detect_game_platform(const ChdReader& reader, DetectFlags flags,
 {
     ContentType content = reader.detect_content_type();
 
-    // Build a SectorReader from the ChdReader
+    // Get tracks for CD/GD content (used for both heuristics and proper sector decoding)
+    std::vector<TrackInfo> tracks;
+    if (content == ContentType::CDROM || content == ContentType::GDROM) {
+        try { tracks = reader.get_tracks(); } catch (...) {}
+    }
+
+    // Build a SectorReader from the ChdReader.
+    // Detection code expects cooked 2048-byte sectors, so always request Mode1 data
+    // for CD/GD content and let cdrom conversion handle raw/mode2 tracks safely.
     SectorReader sector_reader = [&reader, content](uint32_t lba, uint8_t* buffer) -> bool {
         try {
             if (content == ContentType::CDROM || content == ContentType::GDROM) {
@@ -861,12 +919,6 @@ DetectionResult detect_game_platform(const ChdReader& reader, DetectFlags flags,
             return false;
         }
     };
-
-    // Get tracks for CD/GD content
-    std::vector<TrackInfo> tracks;
-    if (content == ContentType::CDROM || content == ContentType::GDROM) {
-        try { tracks = reader.get_tracks(); } catch (...) {}
-    }
 
     return detect_game_platform(sector_reader, content, tracks, flags, detect_title);
 }
@@ -1032,6 +1084,7 @@ DetectionResult detect_input(const std::string& input_path, bool detect_title)
         result.title            = det.title;
         result.manufacturer_id  = det.manufacturer_id;
         result.platform_source  = det.platform_source;
+        result.detection_source = det.detection_source;
         return result;
     }
 

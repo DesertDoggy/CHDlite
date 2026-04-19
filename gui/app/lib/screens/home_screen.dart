@@ -31,7 +31,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final settings = SettingsManager.instance;
 
     // Accept dropped files and directories; expand directories recursively.
-    final validPaths = await _expandInputPaths(paths);
+    final expandedPaths = await _expandInputPaths(paths);
+    final validPaths = await _normalizeInputsForOperation(operation, expandedPaths);
 
     if (validPaths.isEmpty) {
       setState(() {
@@ -76,6 +77,62 @@ class _HomeScreenState extends State<HomeScreen> {
     return result;
   }
 
+  Future<String?> _findReferencingSheet(String binPath) async {
+    final binFile = File(binPath);
+    final dirPath = binFile.parent.path;
+    final binNameLower = binFile.uri.pathSegments.last.toLowerCase();
+
+    try {
+      await for (final entity in Directory(dirPath).list(followLinks: false)) {
+        if (entity is! File) continue;
+        final ext = entity.path.toLowerCase();
+        if (!ext.endsWith('.cue') && !ext.endsWith('.gdi')) continue;
+
+        try {
+          final lines = await entity.readAsLines();
+          for (final line in lines) {
+            if (line.toLowerCase().contains(binNameLower)) {
+              return entity.path;
+            }
+          }
+        } catch (_) {
+          // Ignore unreadable sheet files.
+        }
+      }
+    } catch (_) {
+      // Ignore unreadable directories.
+    }
+
+    return null;
+  }
+
+  Future<List<String>> _normalizeInputsForOperation(
+    ChdOperation operation,
+    List<String> paths,
+  ) async {
+    if (operation != ChdOperation.compress) return paths;
+
+    // For compress: if a .bin belongs to a .cue/.gdi sheet, use the sheet path.
+    // This matches CLI expectations and avoids generating malformed single-track CD CHDs.
+    final out = <String>[];
+    final seen = <String>{};
+
+    for (final p in paths) {
+      final lower = p.toLowerCase();
+      if (lower.endsWith('.bin')) {
+        final sheet = await _findReferencingSheet(p);
+        if (sheet != null) {
+          if (seen.add(sheet)) out.add(sheet);
+          continue;
+        }
+      }
+
+      if (seen.add(p)) out.add(p);
+    }
+
+    return out;
+  }
+
   Future<void> _startTempLog() async {
     // Close and delete any previous temp log
     await _tempLogSink?.close();
@@ -111,11 +168,13 @@ class _HomeScreenState extends State<HomeScreen> {
       case ChdOperation.hash:
         final algos = settings.getList('hash.algorithms', ['sha1']);
         options['algorithms'] = algos;
+        break;
 
       case ChdOperation.extract:
         final outDir = settings.get('output.extract_output_dir', '');
         if (outDir.isNotEmpty) options['output_dir'] = outDir;
         options['split_bin'] = settings.getBool('extract.split_bin', true);
+        break;
 
       case ChdOperation.compress:
         final outDir = settings.get('output.compress_output_dir', '');
@@ -136,6 +195,7 @@ class _HomeScreenState extends State<HomeScreen> {
         if (hunk > 0) options['hunk_size'] = hunk;
         if (unit > 0) options['unit_size'] = unit;
         if (threads > 0) options['threads'] = threads;
+        break;
     }
 
     _handler.start(

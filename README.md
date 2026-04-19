@@ -5,9 +5,8 @@ CLI/GUI mostly working. Bug fixes probably still needed more. Benchmark needed. 
 # CHDlite
 ![CHDlite](https://github.com/DesertDoggy/CHDlite/blob/main/gui/assets/Groove-Title.png)
 Basically a CHDman wrapper with added functions and drag&drop support. Priority on disc rom consoles.
- Read, hash, extract, and create CHD files for CD, DVD, GD-ROM, and raw disc formats.
-
-Built on MAME's CHD/chdman implementation with a C++
+ Read, hash, extract, and create CHD files.
+ Main support: Optical disc chd.
 
 ## Acknowledgments
 
@@ -47,7 +46,7 @@ Each release contains four binaries:
 | `chdlite`   | Auto (extract or create)    | Main binary, speed-optimized |
 | `chdread`   | Display CHD info            | Symlink to chdlite |
 | `chdhash`   | Hash CHD content            | Symlink to chdlite |
-| `chdcomp`   | Create with max compression | Symlink to chdlite, uses `--best` automatically |
+| `chdcomp`   | Create with max compression | Symlink to chdlite, uses `--best` automatically | (can also set to chdman default (best - zstd) in GUI)
 
 **Windows:** All binaries are copies of the same executable with different defaults.  
 **Mac/Linux:** `chdread`, `chdhash`, and `chdcomp` are symlinks to `chdlite`.
@@ -72,7 +71,8 @@ extract  <input.chd> [-o output] [options]    Extract CHD to disc image
 create   <input>     [-o output.chd] [options] Create CHD from disc image
 read     <input.chd> [options]                 Read CHD info (header + tracks)
 hash     <input.chd> [-hash sha1,md5,...] [options] Hash CHD content
-auto     <input>     [options]                 Auto: .chd → extract, else → create
+auto     <input>     [options]                 Auto: .chd → extract, else → create 
+input path can use also "-i path"
 ```
 
 ### Compression defaults

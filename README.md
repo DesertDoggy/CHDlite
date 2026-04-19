@@ -21,20 +21,21 @@ This project incorporates code and concepts from the following open-source proje
 **AGPL-3.0**
 (This project incorporates CHD/cdhman code from [MAME](https://github.com/mamedev/mame), which is licensed under BSD-3-Clause. If for what ever miraculous reason the MAME development team wishes to use or incorporate code/ideas from CHDlite back into MAME, this project's license can be lowered, limiting it to the mamedev team, on notice.)
 
-- **Read** CHD headers, tracks, and metadata
-- **Hash** CHD content (SHA-1, MD5, CRC32, SHA-256, XXH3)
-- **Extract** CHD to CUE/BIN, GDI, or raw image
-- **Create** CHD from CUE/BIN, GDI, ISO, or raw image
+- **Read** headers, tracks, and metadata (CHD) detects platform, title, manufacture id(iso/bin/cue/gdi/chd)
 - **Auto-detect** content type: CD-ROM, DVD, GD-ROM (Dreamcast), Hard Disk, Raw
+- **Hash** hashes CHD content by track, including cue/gdi(SHA-1, MD5, CRC32, SHA-256, XXH3)
+- **Extract** CHD to CUE/BIN, GDI, or raw image
+- **Create** CHD from CUE/BIN, GDI, ISO, or raw image 
 - **System detection**: PS1, PS2, PSP, Saturn, Mega CD, 3DO, Dreamcast (PC Engine detection is WIP)
-- **Drag-and-drop** support — drop files or folders onto the binary **WIP For the moment Windows only + read/hash is useless due to terminal closing on exit. (use cli for read/hash)
 - **Batch processing** — process multiple files and folders in one invocation
 - **chdman-compatible** commands for drop-in replacement workflows
 - **Usable as a C++ static library** in other projects
 
+- **Drag-and-drop** support — drop files or folders onto the binary **WIP For the moment Windows only
+
 ## Downloads
 
-Pre-built binaries for macOS, (Linux WIP) and Windows are available on the [Releases](https://github.com/DesertDoggy/CHDlite/releases) page.
+Pre-built binaries for macOS, Linux and Windows are available on the [Releases](https://github.com/DesertDoggy/CHDlite/releases) page.
 
 Each release contains four binaries:
 

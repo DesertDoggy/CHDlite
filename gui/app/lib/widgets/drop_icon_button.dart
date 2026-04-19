@@ -3,7 +3,6 @@ import 'package:desktop_drop/desktop_drop.dart';
 import '../screens/home_screen.dart';
 
 class DropIconButton extends StatefulWidget {
-  final String label;
   final String assetPath;
   final ChdOperation operation;
   final void Function(ChdOperation operation, List<String> paths) onFilesDropped;
@@ -11,7 +10,6 @@ class DropIconButton extends StatefulWidget {
 
   const DropIconButton({
     super.key,
-    required this.label,
     required this.assetPath,
     required this.operation,
     required this.onFilesDropped,
@@ -35,7 +33,7 @@ class _DropIconButtonState extends State<DropIconButton>
       duration: const Duration(milliseconds: 150),
       vsync: this,
     );
-    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.25).animate(
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.3).animate(
       CurvedAnimation(parent: _scaleController, curve: Curves.easeOut),
     );
   }
@@ -79,49 +77,36 @@ class _DropIconButtonState extends State<DropIconButton>
           );
         },
         child: Container(
-          width: 120,
-          height: 140,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: _isDragging
-                  ? Theme.of(context).colorScheme.primary
-                  : Colors.transparent,
-              width: 2,
-            ),
-            color: _isDragging
-                ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.1)
-                : null,
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.asset(
-                  widget.assetPath,
-                  width: 80,
-                  height: 80,
-                  fit: BoxFit.contain,
-                  errorBuilder: (_, e, st) => Container(
-                    width: 80,
-                    height: 80,
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    child: Icon(
-                      _iconForOperation(widget.operation),
-                      size: 40,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
+          width: 200,
+          height: 200,
+          decoration: _isDragging
+              ? BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.primary,
+                    width: 2,
                   ),
+                  color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+                )
+              : null,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Image.asset(
+              widget.assetPath,
+              width: 200,
+              height: 200,
+              fit: BoxFit.contain,
+              errorBuilder: (_, e, st) => Container(
+                width: 190,
+                height: 190,
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                child: Icon(
+                  _iconForOperation(widget.operation),
+                  size: 64,
+                  color: Theme.of(context).colorScheme.primary,
                 ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                widget.label,
-                style: Theme.of(context).textTheme.labelLarge,
-                textAlign: TextAlign.center,
-              ),
-            ],
+            ),
           ),
         ),
       ),

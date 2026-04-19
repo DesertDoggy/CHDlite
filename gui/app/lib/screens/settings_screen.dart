@@ -14,11 +14,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // Controllers
   late TextEditingController _extractDirCtrl;
   late TextEditingController _compressDirCtrl;
-  late TextEditingController _hashDirCtrl;
-  late TextEditingController _codecCtrl;
+  late TextEditingController _logDirCtrl;
   late TextEditingController _hunkSizeCtrl;
   late TextEditingController _unitSizeCtrl;
   late TextEditingController _threadsCtrl;
+  late TextEditingController _liteCodecListCtrl;
 
   // Hash algorithm toggles
   bool _sha1 = true;
@@ -27,20 +27,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _sha256 = false;
   bool _xxh3 = false;
 
+  // Log output checkboxes
+  bool _logRead = true;
+  bool _logHash = true;
+  bool _logCompress = true;
+
+  // Hash log type checkboxes
+  bool _hashLogSvg = false;
+  bool _hashLogLog = true;
+  bool _hashLogJson = false;
+
   // Other settings
-  bool _splitBin = false;
+  bool _splitBin = true;
   String _logLevel = 'info';
+
+  // Compression settings
+  String _compCodec = 'best'; // 'best' or 'chdman'
+  String _liteCodec = 'auto'; // 'auto' or 'custom'
 
   @override
   void initState() {
     super.initState();
     _extractDirCtrl = TextEditingController(text: _settings.get('output.extract_output_dir', ''));
     _compressDirCtrl = TextEditingController(text: _settings.get('output.compress_output_dir', ''));
-    _hashDirCtrl = TextEditingController(text: _settings.get('output.hash_output_dir', 'desktop'));
-    _codecCtrl = TextEditingController(text: _settings.get('compress.codec', 'zstd'));
+    _logDirCtrl = TextEditingController(text: _settings.get('output.log_output_dir', 'desktop'));
     _hunkSizeCtrl = TextEditingController(text: _settings.get('compress.hunk_size', '65536'));
     _unitSizeCtrl = TextEditingController(text: _settings.get('compress.unit_size', '2048'));
     _threadsCtrl = TextEditingController(text: _settings.get('compress.threads', '0'));
+    _liteCodecListCtrl = TextEditingController(text: _settings.get('compress.lite_codec_list', 'zstd,lzma,zlib,huff'));
 
     final algorithms = _settings.getList('hash.algorithms', ['sha1']);
     _sha1 = algorithms.contains('sha1');
@@ -49,30 +63,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _sha256 = algorithms.contains('sha256');
     _xxh3 = algorithms.contains('xxh3');
 
-    _splitBin = _settings.getBool('extract.split_bin', false);
+    _splitBin = _settings.getBool('extract.split_bin', true);
     _logLevel = _settings.get('app.log_level', 'info');
+
+    _logRead = _settings.getBool('log.read', true);
+    _logHash = _settings.getBool('log.hash', true);
+    _logCompress = _settings.getBool('log.compress', true);
+
+    _hashLogSvg = _settings.getBool('hash.log_svg', false);
+    _hashLogLog = _settings.getBool('hash.log_log', true);
+    _hashLogJson = _settings.getBool('hash.log_json', false);
+
+    _compCodec = _settings.get('compress.comp_codec', 'best');
+    _liteCodec = _settings.get('compress.lite_codec', 'auto');
   }
 
   @override
   void dispose() {
     _extractDirCtrl.dispose();
     _compressDirCtrl.dispose();
-    _hashDirCtrl.dispose();
-    _codecCtrl.dispose();
+    _logDirCtrl.dispose();
     _hunkSizeCtrl.dispose();
     _unitSizeCtrl.dispose();
     _threadsCtrl.dispose();
+    _liteCodecListCtrl.dispose();
     super.dispose();
   }
 
   void _save() {
     _settings.set('output.extract_output_dir', _extractDirCtrl.text);
     _settings.set('output.compress_output_dir', _compressDirCtrl.text);
-    _settings.set('output.hash_output_dir', _hashDirCtrl.text);
-    _settings.set('compress.codec', _codecCtrl.text);
+    _settings.set('output.log_output_dir', _logDirCtrl.text);
     _settings.set('compress.hunk_size', _hunkSizeCtrl.text);
     _settings.set('compress.unit_size', _unitSizeCtrl.text);
     _settings.set('compress.threads', _threadsCtrl.text);
+    _settings.set('compress.lite_codec_list', _liteCodecListCtrl.text);
 
     final algorithms = <String>[];
     if (_sha1) algorithms.add('sha1');
@@ -84,6 +109,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     _settings.setBool('extract.split_bin', _splitBin);
     _settings.set('app.log_level', _logLevel);
+
+    _settings.setBool('log.read', _logRead);
+    _settings.setBool('log.hash', _logHash);
+    _settings.setBool('log.compress', _logCompress);
+
+    _settings.setBool('hash.log_svg', _hashLogSvg);
+    _settings.setBool('hash.log_log', _hashLogLog);
+    _settings.setBool('hash.log_json', _hashLogJson);
+
+    _settings.set('compress.comp_codec', _compCodec);
+    _settings.set('compress.lite_codec', _liteCodec);
 
     _settings.save();
 
@@ -143,7 +179,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SizedBox(height: 16),
         _buildDirField('Compress Output Directory', _compressDirCtrl, 'Empty = same as input'),
         const SizedBox(height: 16),
-        _buildDirField('Hash Output Directory', _hashDirCtrl, '"desktop", "logs", or absolute path'),
+        _buildDirField('Log Output Directory', _logDirCtrl, '"desktop", "logs", or absolute path'),
+        Padding(
+          padding: const EdgeInsets.only(left: 12, top: 4),
+          child: Text(
+            'Outputs hash/read/comp/lite results and error log.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        const Text('Log Output', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 4),
+        CheckboxListTile(
+          title: const Text('Read'),
+          dense: true,
+          value: _logRead,
+          onChanged: (v) => setState(() => _logRead = v!),
+        ),
+        CheckboxListTile(
+          title: const Text('Hash'),
+          dense: true,
+          value: _logHash,
+          onChanged: (v) => setState(() => _logHash = v!),
+        ),
+        CheckboxListTile(
+          title: const Text('Comp / Lite'),
+          dense: true,
+          value: _logCompress,
+          onChanged: (v) => setState(() => _logCompress = v!),
+        ),
         const SizedBox(height: 16),
         SwitchListTile(
           title: const Text('Split BIN files'),
@@ -159,15 +225,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        TextField(
-          controller: _codecCtrl,
-          decoration: const InputDecoration(
-            labelText: 'Codec',
-            helperText: 'zstd, zlib, lzma, flac, cdzs, cdzl, cdlz, cdfl (comma-separated, up to 4)',
-            border: OutlineInputBorder(),
-          ),
+        const Text('Comp (Max Compression)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        RadioListTile<String>(
+          title: const Text('Max compression (--best)'),
+          value: 'best',
+          groupValue: _compCodec,
+          onChanged: (v) => setState(() => _compCodec = v!),
         ),
-        const SizedBox(height: 16),
+        RadioListTile<String>(
+          title: const Text('chdman default (-c chdman)'),
+          value: 'chdman',
+          groupValue: _compCodec,
+          onChanged: (v) => setState(() => _compCodec = v!),
+        ),
+        const Divider(height: 32),
+        const Text('Lite (Fast)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        RadioListTile<String>(
+          title: const Text('Auto (autodetect codec)'),
+          value: 'auto',
+          groupValue: _liteCodec,
+          onChanged: (v) => setState(() => _liteCodec = v!),
+        ),
+        RadioListTile<String>(
+          title: const Text('Custom codec list'),
+          value: 'custom',
+          groupValue: _liteCodec,
+          onChanged: (v) => setState(() => _liteCodec = v!),
+        ),
+        if (_liteCodec == 'custom') ...[
+          const SizedBox(height: 8),
+          TextField(
+            controller: _liteCodecListCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Codec list',
+              helperText: 'Comma-separated: zstd,lzma,zlib,huff/flac',
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ],
+        const Divider(height: 32),
         TextField(
           controller: _hunkSizeCtrl,
           decoration: const InputDecoration(
@@ -205,13 +303,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        const Text('Hash Algorithms', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        const Text('Hash Algorithms', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
         CheckboxListTile(title: const Text('SHA-1'), value: _sha1, onChanged: (v) => setState(() => _sha1 = v!)),
         CheckboxListTile(title: const Text('MD5'), value: _md5, onChanged: (v) => setState(() => _md5 = v!)),
         CheckboxListTile(title: const Text('CRC32'), value: _crc32, onChanged: (v) => setState(() => _crc32 = v!)),
         CheckboxListTile(title: const Text('SHA-256'), value: _sha256, onChanged: (v) => setState(() => _sha256 = v!)),
         CheckboxListTile(title: const Text('XXH3'), value: _xxh3, onChanged: (v) => setState(() => _xxh3 = v!)),
+        const Divider(height: 32),
+        const Text('Log Type', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        CheckboxListTile(title: const Text('SVG'), value: _hashLogSvg, onChanged: (v) => setState(() => _hashLogSvg = v!)),
+        CheckboxListTile(title: const Text('Log (plain text)'), value: _hashLogLog, onChanged: (v) => setState(() => _hashLogLog = v!)),
+        CheckboxListTile(title: const Text('JSON'), value: _hashLogJson, onChanged: (v) => setState(() => _hashLogJson = v!)),
       ],
     );
   }
@@ -236,11 +340,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
           onChanged: (v) => setState(() => _logLevel = v!),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 24),
+        const Text('App Mode', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
         ListTile(
-          title: const Text('App Mode'),
-          subtitle: Text(_settings.get('app.mode', 'install')),
-          trailing: const Icon(Icons.info_outline),
+          title: const Text('Portable (default)'),
+          subtitle: const Text('Config stored next to executable'),
+          leading: const Icon(Icons.folder_special),
+        ),
+        const SizedBox(height: 8),
+        FilledButton.tonalIcon(
+          onPressed: () {
+            // TODO: Install mode — copy to system paths
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Install mode not yet implemented'), duration: Duration(seconds: 1)),
+            );
+          },
+          icon: const Icon(Icons.install_desktop),
+          label: const Text('Switch to Install Mode'),
         ),
       ],
     );

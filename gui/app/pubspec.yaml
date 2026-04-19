@@ -1,4 +1,4 @@
-name: app
+name: chdlite
 description: "CHDlite GUI - Read, Hash, Extract, and Compress CHD files"
 publish_to: 'none'
 version: 0.1.0+1

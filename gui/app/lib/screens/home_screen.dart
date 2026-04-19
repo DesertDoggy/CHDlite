@@ -55,7 +55,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('CHDlite'),
+        title: const SizedBox.shrink(),
         centerTitle: false,
         actions: [
           IconButton(
@@ -72,39 +72,56 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Column(
         children: [
-          // Top: 4 operation buttons
+          // Top: 4 operation buttons — clipBehavior: none so scale animation can overflow
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Column(
               children: [
-                DropIconButton(
-                  label: 'Read',
-                  assetPath: '../assets/CHD read Icon1.png',
-                  operation: ChdOperation.read,
-                  onFilesDropped: _onFilesDropped,
-                  isProcessing: _isProcessing,
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  spacing: 0,
+                  children: [
+                    DropIconButton(
+                      assetPath: '../assets/CHD read Icon1.png',
+                      operation: ChdOperation.read,
+                      onFilesDropped: _onFilesDropped,
+                      isProcessing: _isProcessing,
+                    ),
+                    DropIconButton(
+                      assetPath: '../assets/CHDcomp Icon1.png',
+                      operation: ChdOperation.compress,
+                      onFilesDropped: _onFilesDropped,
+                      isProcessing: _isProcessing,
+                    ),
+                    DropIconButton(
+                      assetPath: '../assets/Groove-Title.png',
+                      operation: ChdOperation.extract,
+                      onFilesDropped: _onFilesDropped,
+                      isProcessing: _isProcessing,
+                    ),
+                    DropIconButton(
+                      assetPath: '../assets/CHD hash Icon1.png',
+                      operation: ChdOperation.hash,
+                      onFilesDropped: _onFilesDropped,
+                      isProcessing: _isProcessing,
+                    ),
+                  ],
                 ),
-                DropIconButton(
-                  label: 'Compress',
-                  assetPath: '../assets/CHDcomp Icon1.png',
-                  operation: ChdOperation.compress,
-                  onFilesDropped: _onFilesDropped,
-                  isProcessing: _isProcessing,
+                const SizedBox(height: 8),
+                Text(
+                  'Comp: Max compression. Slow.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontSize: 18,
+                  ),
                 ),
-                DropIconButton(
-                  label: 'Extract',
-                  assetPath: '../assets/Groove-Title.png',
-                  operation: ChdOperation.extract,
-                  onFilesDropped: _onFilesDropped,
-                  isProcessing: _isProcessing,
-                ),
-                DropIconButton(
-                  label: 'Hash',
-                  assetPath: '../assets/CHD hash Icon1.png',
-                  operation: ChdOperation.hash,
-                  onFilesDropped: _onFilesDropped,
-                  isProcessing: _isProcessing,
+                Text(
+                  'Lite: Fast.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontSize: 18,
+                  ),
                 ),
               ],
             ),

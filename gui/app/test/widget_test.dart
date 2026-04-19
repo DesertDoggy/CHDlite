@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/main.dart';
+import 'package:chdlite/main.dart';
 
 void main() {
   testWidgets('App launches', (WidgetTester tester) async {

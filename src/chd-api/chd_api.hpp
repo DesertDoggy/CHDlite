@@ -10,6 +10,7 @@
 #include "chd_processor.hpp"
 #include "chd_extractor.hpp"
 #include "chd_archiver.hpp"
+#include "chd_frontend.hpp"
 
 namespace chdlite {
 

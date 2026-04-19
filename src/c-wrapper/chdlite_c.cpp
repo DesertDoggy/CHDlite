@@ -702,16 +702,17 @@ CHDLITE_API char* chdlite_compress(const char* input_path,
 
         // If the input is already a CHD, treat as extract instead of create.
         if (chdlite::ChdReader::is_chd_file(in)) {
-            chdlite::ExtractOptions eopts;
-            if (output_path && *output_path) eopts.output_dir = output_path;
+            chdlite::FrontendExtractOptions eopts;
+            eopts.input_path = in;
+            if (output_path && *output_path) eopts.output_path = output_path;
             eopts.split_bin = false;
             eopts.progress_callback = make_progress();
             eopts.log_callback = make_log();
 
-            chdlite::ChdExtractor extractor;
-            auto eres = extractor.extract(in, eopts);
-            if (!eres.success)
-                return json_error(eres.error_message);
+            auto front = chdlite::run_frontend_extract(eopts);
+            if (!front.success)
+                return json_error(front.error_message);
+            const auto& eres = front.extract;
 
             std::ostringstream efmt;
             efmt << "Operation:    Extract (CHD input)\n";
@@ -738,52 +739,37 @@ CHDLITE_API char* chdlite_compress(const char* input_path,
             return dup_str(ejs.str());
         }
 
-        chdlite::ArchiveOptions opts;
         std::string codec_arg = codec ? normalize_codec_arg(codec) : "";
-        std::array<chdlite::Codec, 4> custom_codecs{};
-        clear_codecs(custom_codecs);
+
+        chdlite::FrontendCreateOptions copts;
+        copts.input_path = in;
+        if (output_path && *output_path) copts.output_path = output_path;
+        if (hunk_size > 0) copts.hunk_size = static_cast<uint32_t>(hunk_size);
+        if (unit_size > 0) copts.unit_size = static_cast<uint32_t>(unit_size);
+        if (threads > 0) copts.num_processors = threads;
+        copts.progress_callback = make_progress();
+        copts.log_callback = make_log();
 
         if (!codec_arg.empty() && codec_arg != "auto") {
-            if (codec_arg == "best") {
-                opts.best = true;
-            } else if (codec_arg == "chdman") {
-                opts.chdman_compat = true;
-            } else if (codec_arg.find(',') != std::string::npos) {
-                if (!parse_codec_list(codec_arg, custom_codecs))
-                    return json_error("Invalid compression list. Use up to 4 codecs separated by commas.");
-                for (int i = 0; i < 4; i++)
-                    opts.compression[i] = custom_codecs[i];
-            } else {
-                chdlite::Codec parsed = parse_codec(codec_arg);
-                if (parsed == chdlite::Codec::None)
-                    return json_error("Unknown compression mode or codec");
-                opts.codec = parsed;
-            }
-        }
-        if (hunk_size > 0) opts.hunk_bytes = static_cast<uint32_t>(hunk_size);
-        if (unit_size > 0) opts.unit_bytes = static_cast<uint32_t>(unit_size);
-        if (threads > 0)   opts.num_processors = threads;
-        opts.progress_callback = make_progress();
-        opts.log_callback = make_log();
-
-        CompressionSummary summary = build_compression_summary(in, opts);
-
-        std::string out;
-        if (output_path && *output_path) {
-            out = output_path;
-        } else {
-            // Default: same name with .chd extension
-            out = in;
-            auto dot = out.rfind('.');
-            if (dot != std::string::npos) out = out.substr(0, dot);
-            out += ".chd";
+            if (codec_arg == "best") copts.best = true;
+            else if (codec_arg == "chdman") copts.chdman_compat = true;
+            else copts.compression_arg = codec_arg;
         }
 
-        chdlite::ChdArchiver archiver;
-        auto result = archiver.archive(in, out, opts);
+        chdlite::ArchiveOptions summary_opts;
+        summary_opts.best = copts.best;
+        summary_opts.chdman_compat = copts.chdman_compat;
+        if (!copts.compression_arg.empty()) {
+            std::string cerr;
+            if (!chdlite::apply_cli_compression_arg(copts.compression_arg, summary_opts, cerr))
+                return json_error(cerr);
+        }
+        CompressionSummary summary = build_compression_summary(in, summary_opts);
 
-        if (!result.success)
-            return json_error(result.error_message);
+        auto front = chdlite::run_frontend_create(copts);
+        if (!front.success)
+            return json_error(front.error_message);
+        const auto& result = front.archive;
 
         std::ostringstream formatted;
         formatted << "Output:       " << result.output_path << "\n";

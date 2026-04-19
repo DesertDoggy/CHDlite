@@ -261,6 +261,7 @@ add_library(chdlite STATIC
     src/chd-api/chd_processor.cpp
     src/chd-api/chd_extractor.cpp
     src/chd-api/chd_archiver.cpp
+    src/chd-api/chd_frontend.cpp
     src/chd-api/detect_game_platform.cpp
 )
 
@@ -283,6 +284,7 @@ add_library(chdlite_shared SHARED
     src/chd-api/chd_processor.cpp
     src/chd-api/chd_extractor.cpp
     src/chd-api/chd_archiver.cpp
+    src/chd-api/chd_frontend.cpp
     src/chd-api/detect_game_platform.cpp
 )
 
@@ -342,6 +344,7 @@ install(FILES
     src/chd-api/chd_processor.hpp
     src/chd-api/chd_extractor.hpp
     src/chd-api/chd_archiver.hpp
+    src/chd-api/chd_frontend.hpp
     src/chd-api/detect_game_platform.hpp
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/chdlite
 )

@@ -1149,73 +1149,35 @@ static int cmd_extract(const Args& args)
         return 1;
     }
 
-    ExtractOptions opts;
-    opts.parent_chd_path = args.input_parent;
-    opts.force_overwrite = args.force;
-    opts.output_bin = args.output_bin;
-    opts.input_start_byte = args.input_start_byte;
-    opts.input_start_hunk = args.input_start_hunk;
-    opts.input_bytes = args.input_bytes;
-    opts.input_hunks = args.input_hunks;
-    opts.input_start_frame = args.input_start_frame;
-    opts.input_frames = args.input_frames;
-    opts.hash = args.hash;
-
-    // CUE style override
+    FrontendExtractOptions fopts;
+    fopts.input_path = args.input;
+    fopts.output_path = args.output;
+    fopts.input_parent = args.input_parent;
+    fopts.force_overwrite = args.force;
+    fopts.output_bin = args.output_bin;
+    fopts.input_start_byte = args.input_start_byte;
+    fopts.input_start_hunk = args.input_start_hunk;
+    fopts.input_bytes = args.input_bytes;
+    fopts.input_hunks = args.input_hunks;
+    fopts.input_start_frame = args.input_start_frame;
+    fopts.input_frames = args.input_frames;
+    fopts.hash = args.hash;
+    fopts.split_bin = args.no_splitbin ? false : true;
+    fopts.progress_callback = make_progress("Extracting");
     if (args.cue_style >= 0 && args.cue_style <= 2)
-        opts.cue_style = parse_cue_style(args.cue_style);
-
-    // Split-bin: default true, overridable with --no-splitbin
-    opts.split_bin = args.no_splitbin ? false : true;
-
-    // Determine output path
-    if (!args.output.empty())
-    {
-        fs::path out(args.output);
-        if (fs::is_directory(out) || args.output.back() == '/' || args.output.back() == '\\')
-        {
-            // Directory: use as output_dir, extractor auto-generates filename from input stem
-            opts.output_dir = out.string();
-        }
-        else
-        {
-            opts.output_dir = out.parent_path().string();
-            opts.output_filename = out.filename().string();
-
-            // Detect force_raw / force_bin_cue from output extension
-            std::string ext = out.extension().string();
-            for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            if (ext == ".bin") opts.force_raw = true;
-        }
-    }
-    else
-    {
-        // Default: same directory as input, auto-detect format
-        opts.output_dir = fs::path(args.input).parent_path().string();
-    }
-
-    // Progress callback
-    opts.progress_callback = make_progress("Extracting");
+        fopts.cue_style = parse_cue_style(args.cue_style);
 
     // Print header info
     std::printf("Input CHD:    %s\n", args.input.c_str());
 
-    ChdExtractor extractor;
-    ExtractionResult result;
-    try {
-        result = extractor.extract(args.input, opts);
-    } catch (const std::exception& e) {
-        std::fprintf(stderr, "\nError: %s\n", e.what());
-        log_error("extract: i=" + args.input + " " + e.what());
-        return 1;
-    }
-
-    if (!result.success)
+    auto front = run_frontend_extract(fopts);
+    if (!front.success)
     {
-        std::fprintf(stderr, "\nError: %s\n", result.error_message.c_str());
-        log_error("extract: i=" + args.input + " " + result.error_message);
+        std::fprintf(stderr, "\nError: %s\n", front.error_message.c_str());
+        log_error("extract: i=" + args.input + " " + front.error_message);
         return 1;
     }
+    const auto& result = front.extract;
 
     std::printf("Content Type: %s\n", content_type_name(result.detected_type));
     std::printf("Output:       %s\n", result.output_path.c_str());
@@ -1249,91 +1211,62 @@ static int cmd_create(const Args& args)
         return 1;
     }
 
-    ArchiveOptions opts;
-    opts.parent_chd_path = args.input_parent;
-    opts.hunk_bytes = args.hunk_size;
-    opts.unit_bytes = args.unit_size;
-    opts.num_processors = args.num_processors;
-    opts.detect_title = true;
-    opts.best = args.best;
-    opts.chdman_compat = args.chdman_compat;
+    FrontendCreateOptions fopts;
+    fopts.input_path = args.input;
+    fopts.output_path = args.output;
+    fopts.input_parent = args.input_parent;
+    fopts.compression_arg = args.compression;
+    fopts.hunk_size = args.hunk_size;
+    fopts.unit_size = args.unit_size;
+    fopts.num_processors = args.num_processors;
+    fopts.best = args.best;
+    fopts.chdman_compat = args.chdman_compat;
+    fopts.detect_title = true;
+    fopts.progress_callback = make_progress("Compressing");
+    fopts.log_callback = [](LogLevel lvl, const std::string& msg) { log_entry(lvl, msg); };
 
-    // Parse compression
-    if (!args.compression.empty())
+    auto front = run_frontend_create(fopts);
+    if (!front.success)
     {
-        std::string cerr;
-        if (!apply_compression_arg(args.compression, opts, cerr))
-        {
-            std::fprintf(stderr, "Error: %s\n", cerr.c_str());
-            return 1;
-        }
+        std::fprintf(stderr, "Error: %s\n", front.error_message.c_str());
+        log_error("create: i=" + args.input + " " + front.error_message);
+        return 1;
     }
 
-    // Determine output path
-    std::string output = args.output;
-    if (output.empty())
-    {
-        // Default: same name with .chd extension
-        fs::path p(args.input);
-        output = (p.parent_path() / p.stem()).string() + ".chd";
-    }
-    else if (fs::is_directory(output) || output.back() == '/' || output.back() == '\\')
-    {
-        // Directory: generate filename from input stem
-        output = (fs::path(output) / (fs::path(args.input).stem().string() + ".chd")).string();
-    }
+    std::string output = front.resolved_output;
 
-    // Progress callback
-    opts.progress_callback = make_progress("Compressing");
-
-    // Library log callback — forwards Debug+ messages to the CLI log
-    opts.log_callback = [](LogLevel lvl, const std::string& msg) { log_entry(lvl, msg); };
     std::printf("Output CHD:   %s\n", output.c_str());
     std::printf("Input file:   %s\n", args.input.c_str());
     if (!args.input_parent.empty())
         std::printf("Parent CHD:   %s\n", args.input_parent.c_str());
-    if (opts.has_custom_compression())
-        std::printf("Compression:  %s\n", codec_list_string(opts.compression).c_str());
-    else if (opts.best)
+    bool has_custom = !args.compression.empty();
+    if (has_custom)
+        std::printf("Compression:  %s\n", args.compression.c_str());
+    else if (args.best)
         std::printf("Compression:  best (cdlz+cdzs+cdzl+cdfl for CD, zstd+lzma+zlib+huff for DVD)\n");
-    else if (opts.chdman_compat)
+    else if (args.chdman_compat)
         std::printf("Compression:  chdman legacy defaults\n");
     else
         std::printf("Compression:  auto (smart defaults)\n");
-    if (!opts.has_custom_compression() && !opts.best && !opts.chdman_compat)
+    if (!has_custom && !args.best && !args.chdman_compat)
     {
         std::string media_format;
         GamePlatform detected_platform = GamePlatform::Unknown;
         Codec plan[4] = { Codec::None, Codec::None, Codec::None, Codec::None };
-        if (compute_auto_compression_plan(args.input, media_format, detected_platform, plan)) {
+        if (chdlite::compute_auto_compression_plan(args.input, media_format, detected_platform, plan)) {
             std::printf("Detected Media: %s\n", media_type_name_from_format(media_format));
             std::printf("Detected Platform: %s\n", game_platform_name(detected_platform));
             std::printf("Auto-selected Codecs: %s\n", codec_list_string(plan).c_str());
         }
     }
-    if (opts.hunk_bytes)
-        std::printf("Hunk size:    %s bytes\n", big_int_string(opts.hunk_bytes).c_str());
+    if (args.hunk_size)
+        std::printf("Hunk size:    %s bytes\n", big_int_string(args.hunk_size).c_str());
 
     // Wire -np to OSD thread control
     if (args.num_processors > 0)
         osd_num_processors = args.num_processors;
 
-    ChdArchiver archiver;
-    ArchiveResult result;
-    try {
-        result = archiver.archive(args.input, output, opts);
-    } catch (const std::exception& e) {
-        std::fprintf(stderr, "\nError: %s\n", e.what());
-        log_error("create: i=" + args.input + " o=" + output + " " + e.what());
-        return 1;
-    }
-
-    if (!result.success)
-    {
-        std::fprintf(stderr, "\nError: %s\n", result.error_message.c_str());
-        log_error("create: i=" + args.input + " o=" + output + " " + result.error_message);
-        return 1;
-    }
+    const auto& result = front.archive;
 
     std::printf("Input size:   %s bytes\n", big_int_string(result.input_bytes).c_str());
     std::printf("Output size:  %s bytes\n", big_int_string(result.output_bytes).c_str());
@@ -1427,7 +1360,7 @@ static int cmd_create_typed(const Args& args, const char* type_hint)
         std::string media_format;
         GamePlatform detected_platform = GamePlatform::Unknown;
         Codec plan[4] = { Codec::None, Codec::None, Codec::None, Codec::None };
-        if (compute_auto_compression_plan(args.input, media_format, detected_platform, plan)) {
+        if (chdlite::compute_auto_compression_plan(args.input, media_format, detected_platform, plan)) {
             std::printf("Detected Media: %s\n", media_type_name_from_format(media_format));
             std::printf("Detected Platform: %s\n", game_platform_name(detected_platform));
             std::printf("Auto-selected Codecs: %s\n", codec_list_string(plan).c_str());

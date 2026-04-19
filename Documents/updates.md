@@ -48,6 +48,7 @@
 - Default auto codec selection (smart default) now displays media type, platform and chosen codec. on compression.
 
 ### Bug Fixes
+- Restructured Toplevel chdlite command to api for gui/cli compatibility.
 - Added --version args.
 - Fixed version display to 0.2.1 (Was 0.1.0 in 0.2.0)
 - Fixed read not reading platform for ps1,ps2,pce chd.

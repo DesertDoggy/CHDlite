@@ -130,21 +130,23 @@ if [[ "$WITH_APPIMAGE" == "1" ]]; then
     fi
     echo "    Extracting appimagetool (no FUSE required)..."
     pushd /tmp >/dev/null
+    rm -rf /tmp/appimagetool-squashfs /tmp/squashfs-root
     "$APPIMAGETOOL" --appimage-extract >/dev/null 2>&1 || true
+    if [[ ! -d /tmp/squashfs-root ]]; then
+      echo "Error: failed to extract appimagetool"
+      exit 1
+    fi
     mv /tmp/squashfs-root /tmp/appimagetool-squashfs
     popd >/dev/null
   fi
   APPIMAGETOOL="$APPIMAGETOOL_EXTRACTED"
 
   rm -rf "$APPDIR"
-  mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib" \
-            "$APPDIR/usr/share/applications" \
+  mkdir -p "$APPDIR/usr/share/applications" \
             "$APPDIR/usr/share/icons/hicolor/256x256/apps"
 
-  # Copy Flutter bundle
-  cp -r "$BUNDLE/." "$APPDIR/usr/bin/"
-  mv "$APPDIR/usr/bin/lib/"* "$APPDIR/usr/lib/"
-  rmdir "$APPDIR/usr/bin/lib"
+  # Keep Flutter's expected runtime layout intact: app, data/, lib/ as siblings.
+  cp -r "$BUNDLE/." "$APPDIR/"
 
   # Icon
   if [[ -f "$ICON_SRC" ]]; then
@@ -167,8 +169,8 @@ EOF
   cat > "$APPDIR/AppRun" <<'APPRUN'
 #!/bin/bash
 HERE=$(dirname "$(readlink -f "$0")")
-export LD_LIBRARY_PATH="$HERE/usr/lib:${LD_LIBRARY_PATH:-}"
-exec "$HERE/usr/bin/app" "$@"
+export LD_LIBRARY_PATH="$HERE/lib:${LD_LIBRARY_PATH:-}"
+exec "$HERE/app" "$@"
 APPRUN
   chmod +x "$APPDIR/AppRun"
 

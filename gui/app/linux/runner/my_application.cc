@@ -5,6 +5,13 @@
 #include <gdk/gdkx.h>
 #endif
 
+#include <limits.h>
+#include <unistd.h>
+
+#include <filesystem>
+#include <string>
+#include <vector>
+
 #include "flutter/generated_plugin_registrant.h"
 
 struct _MyApplication {
@@ -13,6 +20,34 @@ struct _MyApplication {
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
+
+static std::string executable_dir() {
+  char exe_path[PATH_MAX];
+  ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+  if (len <= 0) {
+    return ".";
+  }
+  exe_path[len] = '\0';
+  return std::filesystem::path(exe_path).parent_path().string();
+}
+
+static void set_window_icon(GtkWindow* window) {
+  const std::string exe_dir = executable_dir();
+  const std::vector<std::string> candidates = {
+      exe_dir + "/chdlite.png",
+      exe_dir + "/data/flutter_assets/assets/CHDlite Icon1.png",
+  };
+
+  for (const auto& path : candidates) {
+    if (!g_file_test(path.c_str(), G_FILE_TEST_EXISTS)) {
+      continue;
+    }
+    g_autoptr(GError) error = nullptr;
+    if (gtk_window_set_icon_from_file(window, path.c_str(), &error)) {
+      return;
+    }
+  }
+}
 
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
@@ -53,6 +88,7 @@ static void my_application_activate(GApplication* application) {
   }
 
   gtk_window_set_default_size(window, 1280, 720);
+  set_window_icon(window);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(

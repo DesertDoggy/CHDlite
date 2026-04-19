@@ -27,6 +27,7 @@ flutter:
   assets:
     - ../assets/CHD read Icon1.png
     - ../assets/CHDcomp Icon1.png
+    - ../assets/CHDlite Icon1.png
     - ../assets/Groove-Title.png
     - ../assets/CHD hash Icon1.png
   #         style: italic

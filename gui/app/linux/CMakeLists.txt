@@ -110,6 +110,17 @@ set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}/lib")
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
 
+# Install app icon at bundle root for GTK window/taskbar icon.
+set(CHDLITE_APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../../assets/CHDlite Icon1.png")
+if(EXISTS "${CHDLITE_APP_ICON}")
+  install(FILES "${CHDLITE_APP_ICON}"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}"
+    RENAME "chdlite.png"
+    COMPONENT Runtime)
+else()
+  message(WARNING "CHDlite icon not found at ${CHDLITE_APP_ICON}")
+endif()
+
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   COMPONENT Runtime)
 

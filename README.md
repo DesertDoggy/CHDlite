@@ -1,5 +1,6 @@
 ### Alpha testing
-Basic functions are working but not enough testing yet.
+CLI/GUI mostly working. Bug fixes probably still needed more. Benchmark needed. Compatability info.
+
 
 # CHDlite
 ![CHDlite](https://github.com/DesertDoggy/CHDlite/blob/main/gui/assets/Groove-Title.png)

@@ -38,7 +38,7 @@
 - `verify`, `copy`, `dumpmeta` commands with full option support
 
 ---
-## v0.2.1(GUI App only release)
+## v0.2.1
 
 ### New binaries
 - Added D&D GUI App for Mac

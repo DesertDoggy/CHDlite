@@ -2,7 +2,7 @@
 Basic functions are working but not enough testing yet.
 
 # CHDlite
-![CHDlite](gui\assets\Groove-Title.png)
+![CHDlite](https://github.com/DesertDoggy/CHDlite/blob/main/gui/assets/Groove-Title.png)
 Basically a CHDman wrapper with added functions and drag&drop support. Priority on disc rom consoles.
  Read, hash, extract, and create CHD files for CD, DVD, GD-ROM, and raw disc formats.
 

@@ -491,6 +491,65 @@ static Codec parse_codec(const std::string& s)
     return Codec::None;
 }
 
+static const char* media_type_name_from_format(const std::string& format)
+{
+    if (format == "cd") return "CD-ROM";
+    if (format == "gd") return "GD-ROM";
+    if (format == "dvd") return "DVD";
+    return "Raw";
+}
+
+static void fill_codecs(Codec (&dst)[4], Codec c0, Codec c1 = Codec::None,
+                        Codec c2 = Codec::None, Codec c3 = Codec::None)
+{
+    dst[0] = c0;
+    dst[1] = c1;
+    dst[2] = c2;
+    dst[3] = c3;
+}
+
+static bool compute_auto_compression_plan(const std::string& input_path,
+                                          std::string& out_media_format,
+                                          GamePlatform& out_platform,
+                                          Codec (&out_codecs)[4])
+{
+    DetectionResult detection = detect_input(input_path, false);
+
+    std::string fmt;
+    std::string ext = fs::path(input_path).extension().string();
+    for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (ext == ".cue" || ext == ".gdi" || ext == ".toc" || ext == ".nrg")
+        fmt = "cd";
+    else if (ext == ".iso" || ext == ".bin" || ext == ".img")
+        fmt = detection.format.empty() ? "raw" : detection.format;
+    else
+        fmt = "raw";
+
+    std::string smart_fmt = (ext == ".gdi") ? "gd" : fmt;
+    out_media_format = smart_fmt;
+    out_platform = detection.game_platform;
+
+    if (out_platform == GamePlatform::PS2) {
+        if (smart_fmt == "dvd")
+            fill_codecs(out_codecs, Codec::Zlib);
+        else
+            fill_codecs(out_codecs, Codec::CD_Zlib, Codec::CD_FLAC);
+        return true;
+    }
+
+    if (smart_fmt == "dvd") {
+        fill_codecs(out_codecs, Codec::Zstd);
+        return true;
+    }
+    if (smart_fmt == "cd" || smart_fmt == "gd") {
+        fill_codecs(out_codecs, Codec::CD_Zstd, Codec::CD_FLAC);
+        return true;
+    }
+
+    fill_codecs(out_codecs, Codec::LZMA, Codec::Zlib, Codec::Huffman, Codec::FLAC);
+    return true;
+}
+
 // Parse -c/--compression into ArchiveOptions.
 // Returns false and sets err on invalid/unknown codec strings.
 static bool apply_compression_arg(const std::string& compression_arg,
@@ -1241,6 +1300,17 @@ static int cmd_create(const Args& args)
         std::printf("Compression:  chdman legacy defaults\n");
     else
         std::printf("Compression:  auto (smart defaults)\n");
+    if (!opts.has_custom_compression() && !opts.best && !opts.chdman_compat)
+    {
+        std::string media_format;
+        GamePlatform detected_platform = GamePlatform::Unknown;
+        Codec plan[4] = { Codec::None, Codec::None, Codec::None, Codec::None };
+        if (compute_auto_compression_plan(args.input, media_format, detected_platform, plan)) {
+            std::printf("Detected Media: %s\n", media_type_name_from_format(media_format));
+            std::printf("Detected Platform: %s\n", game_platform_name(detected_platform));
+            std::printf("Auto-selected Codecs: %s\n", codec_list_string(plan).c_str());
+        }
+    }
     if (opts.hunk_bytes)
         std::printf("Hunk size:    %s bytes\n", big_int_string(opts.hunk_bytes).c_str());
 
@@ -1352,6 +1422,17 @@ static int cmd_create_typed(const Args& args, const char* type_hint)
         std::printf("Compression:  chdman legacy defaults\n");
     else
         std::printf("Compression:  auto (smart defaults)\n");
+    if (!opts.has_custom_compression() && !opts.best && !opts.chdman_compat)
+    {
+        std::string media_format;
+        GamePlatform detected_platform = GamePlatform::Unknown;
+        Codec plan[4] = { Codec::None, Codec::None, Codec::None, Codec::None };
+        if (compute_auto_compression_plan(args.input, media_format, detected_platform, plan)) {
+            std::printf("Detected Media: %s\n", media_type_name_from_format(media_format));
+            std::printf("Detected Platform: %s\n", game_platform_name(detected_platform));
+            std::printf("Auto-selected Codecs: %s\n", codec_list_string(plan).c_str());
+        }
+    }
     if (opts.hunk_bytes)
         std::printf("Hunk size:    %s bytes\n", big_int_string(opts.hunk_bytes).c_str());
 

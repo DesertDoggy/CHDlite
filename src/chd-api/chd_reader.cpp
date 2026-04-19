@@ -106,6 +106,30 @@ struct ChdReader::Impl
         if (err)
             return;
 
+        // parse_metadata does not populate logical offsets used by LBA readers.
+        // Mirror cdrom_file constructor logic so TrackInfo.start_lba is valid.
+        uint32_t physofs = 0, logofs = 0;
+        for (uint32_t i = 0; i < toc.numtrks; i++)
+        {
+            auto& t = toc.tracks[i];
+            t.logframeofs = 0;
+            if (t.pgdatasize == 0)
+                logofs += t.pregap;
+            else
+                t.logframeofs = t.pregap;
+            t.physframeofs = physofs;
+            t.chdframeofs = 0;
+            t.logframeofs += logofs;
+            t.logframes = t.frames - t.pregap;
+            logofs += t.postgap;
+            physofs += t.frames;
+            logofs += t.frames;
+        }
+        toc.tracks[toc.numtrks].logframeofs = logofs;
+        toc.tracks[toc.numtrks].physframeofs = physofs;
+        toc.tracks[toc.numtrks].chdframeofs = 0;
+        toc.tracks[toc.numtrks].logframes = 0;
+
         hdr.num_tracks = toc.numtrks;
         hdr.is_gdrom = (toc.flags & (cdrom_file::CD_FLAG_GDROM | cdrom_file::CD_FLAG_GDROMLE)) != 0;
         hdr.tracks.resize(toc.numtrks);

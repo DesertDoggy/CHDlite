@@ -79,3 +79,4 @@ build_msvc3.log
 /Release_clang/bin/logs
 /Release_msvc/bin
 /Release_msvc
+/Releases

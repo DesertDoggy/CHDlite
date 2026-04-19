@@ -7,12 +7,19 @@ Basically a CHDman wrapper with added functions and drag&drop support. Priority 
 
 Built on MAME's CHD/chdman implementation with a C++
 
+## Acknowledgments
+
+This project incorporates code and concepts from the following open-source projects:
+
+- **[MAME](https://github.com/mamedev/mame)** — CHD/cdhman core library and codec implementations (BSD-3-Clause)
+- **[chdman-simd](https://github.com/grouik1er-coder/chdman-simd)** — SIMD-optimized codec improvements (BSD-2-Clause)
+- **[7-Zip](https://github.com/ip7z/7zip)** — LZMA ASM decoder (x86-64) (LGPL)
+
+
 ## License
 
 **AGPL-3.0**
 (This project incorporates CHD/cdhman code from [MAME](https://github.com/mamedev/mame), which is licensed under BSD-3-Clause. If for what ever miraculous reason the MAME development team wishes to use or incorporate code/ideas from CHDlite back into MAME, this project's license can be lowered, limiting it to the mamedev team, on notice.)
-
-## Features
 
 - **Read** CHD headers, tracks, and metadata
 - **Hash** CHD content (SHA-1, MD5, CRC32, SHA-256, XXH3)

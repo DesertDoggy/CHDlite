@@ -297,14 +297,20 @@ target_include_directories(chdlite_shared
 
 target_link_libraries(chdlite_shared PUBLIC mame_chd_core)
 
-# Configure DLL and import library output names
-set_target_properties(chdlite_shared PROPERTIES
-    OUTPUT_NAME chdlite                # DLL named: chdlite.dll
-    PREFIX ""                          # No lib prefix
-    SUFFIX ".dll"
-    ARCHIVE_OUTPUT_NAME chdlite_import # import lib: chdlite_import.lib (avoids clash with static chdlite.lib)
-    WINDOWS_EXPORT_ALL_SYMBOLS ON      # Auto-export all symbols (generates .def file for MSVC)
-)
+# Configure shared library output names
+if(WIN32)
+    set_target_properties(chdlite_shared PROPERTIES
+        OUTPUT_NAME chdlite                # DLL named: chdlite.dll
+        PREFIX ""                          # No lib prefix
+        SUFFIX ".dll"
+        ARCHIVE_OUTPUT_NAME chdlite_import # import lib: chdlite_import.lib (avoids clash with static chdlite.lib)
+        WINDOWS_EXPORT_ALL_SYMBOLS ON      # Auto-export all symbols (generates .def file for MSVC)
+    )
+else()
+    set_target_properties(chdlite_shared PROPERTIES
+        OUTPUT_NAME chdlite                # libchdlite.so / libchdlite.dylib
+    )
+endif()
 
 # Windows: copy import library with new name (cdhilite_shared.lib)
 if(WIN32)

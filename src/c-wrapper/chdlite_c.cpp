@@ -806,6 +806,16 @@ CHDLITE_API char* chdlite_compress(const char* input_path,
             return json_error(front.error_message);
         const auto& result = front.archive;
 
+        std::string reported_codec_used = codec_name(result.codec_used);
+        if (reported_codec_used == "none" && summary.mode != "auto") {
+            for (auto c : summary.codecs) {
+                if (c != chdlite::Codec::None) {
+                    reported_codec_used = codec_name(c);
+                    break;
+                }
+            }
+        }
+
         std::ostringstream formatted;
         formatted << "Output:       " << result.output_path << "\n";
         if (summary.mode == "--best")
@@ -821,7 +831,7 @@ CHDLITE_API char* chdlite_compress(const char* input_path,
             formatted << "Detected Platform: " << summary.platform << "\n";
         }
         formatted << "Selected Codecs:   " << codec_list_string(summary.codecs) << "\n";
-        formatted << "Codec Used:        " << codec_name(result.codec_used) << "\n";
+        formatted << "Codec Used:        " << reported_codec_used << "\n";
         formatted << "Ratio:             " << result.compression_ratio;
 
         std::ostringstream js;
@@ -830,7 +840,7 @@ CHDLITE_API char* chdlite_compress(const char* input_path,
            << ",\"input_bytes\":" << result.input_bytes
            << ",\"output_bytes\":" << result.output_bytes
            << ",\"compression_ratio\":" << result.compression_ratio
-           << ",\"codec_used\":\"" << codec_name(result.codec_used) << "\""
+           << ",\"codec_used\":\"" << reported_codec_used << "\""
            << ",\"compression_mode\":\"" << json_escape(summary.mode) << "\""
            << ",\"selected_codecs\":\"" << json_escape(codec_list_string(summary.codecs)) << "\""
            << ",\"detected_media\":\"" << json_escape(summary.media) << "\""

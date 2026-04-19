@@ -123,7 +123,7 @@ class OperationHandler {
     ffi.installProgressCallback((current, total) {
       if (total <= 0) return;
       final nowMs = DateTime.now().millisecondsSinceEpoch;
-      if (nowMs - lastProgressEmitMs < 120 && current < total) return;
+      if (nowMs - lastProgressEmitMs < 300 && current < total) return;
       lastProgressEmitMs = nowMs;
       final fileProgress = (current / total).clamp(0.0, 1.0);
       final overall = ((currentFileIndex - 1) + fileProgress) / totalFiles;

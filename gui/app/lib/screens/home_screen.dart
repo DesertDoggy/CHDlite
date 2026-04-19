@@ -23,6 +23,33 @@ class _HomeScreenState extends State<HomeScreen> {
   File? _tempLogFile;
   IOSink? _tempLogSink;
 
+  bool _isProgressLine(String line) => line.startsWith('Progress: ');
+
+  double? _progressPercent(String line) {
+    if (!_isProgressLine(line)) return null;
+    final m = RegExp(r'^Progress:\s*([0-9]+(?:\.[0-9]+)?)%').firstMatch(line);
+    if (m == null) return null;
+    return double.tryParse(m.group(1)!);
+  }
+
+  void _finalizeLastProgressTo100() {
+    if (_outputLines.isEmpty) return;
+    final idx = _outputLines.length - 1;
+    final last = _outputLines[idx];
+    if (!_isProgressLine(last)) return;
+    final pct = _progressPercent(last) ?? 0;
+    if (pct >= 100.0) return;
+    _outputLines[idx] = last.replaceFirst(RegExp(r'Progress:\s*[0-9]+(?:\.[0-9]+)?%'), 'Progress: 100.0%');
+  }
+
+  void _upsertProgressLine(String line) {
+    if (_outputLines.isNotEmpty && _isProgressLine(_outputLines.last)) {
+      _outputLines[_outputLines.length - 1] = line;
+    } else {
+      _outputLines.add(line);
+    }
+  }
+
   void _onFilesDropped(ChdOperation operation, List<String> paths) {
     _handleDropped(operation, paths);
   }
@@ -227,13 +254,27 @@ class _HomeScreenState extends State<HomeScreen> {
       onOutput: (line) {
         if (mounted) {
           _tempLogSink?.writeln(line);
-          setState(() => _outputLines.add(line));
+          setState(() {
+            if (line.startsWith('Processing: ')) {
+              _finalizeLastProgressTo100();
+              _outputLines.add(line);
+              return;
+            }
+
+            if (_isProgressLine(line)) {
+              _upsertProgressLine(line);
+              return;
+            }
+
+            _outputLines.add(line);
+          });
         }
       },
       onComplete: (success, error) async {
         await _tempLogSink?.flush();
         if (mounted) {
           setState(() {
+            _finalizeLastProgressTo100();
             _isProcessing = false;
             _progress = success ? 1.0 : _progress;
           });

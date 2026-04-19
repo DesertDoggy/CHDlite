@@ -7,6 +7,7 @@ class DropIconButton extends StatefulWidget {
   final ChdOperation operation;
   final void Function(ChdOperation operation, List<String> paths) onFilesDropped;
   final bool isProcessing;
+  final double size;
 
   const DropIconButton({
     super.key,
@@ -14,6 +15,7 @@ class DropIconButton extends StatefulWidget {
     required this.operation,
     required this.onFilesDropped,
     required this.isProcessing,
+    required this.size,
   });
 
   @override
@@ -84,8 +86,8 @@ class _DropIconButtonState extends State<DropIconButton>
           );
         },
         child: Container(
-          width: 200,
-          height: 200,
+          width: widget.size,
+          height: widget.size,
           decoration: _isDragging
               ? BoxDecoration(
                   borderRadius: BorderRadius.circular(12),
@@ -100,16 +102,16 @@ class _DropIconButtonState extends State<DropIconButton>
             borderRadius: BorderRadius.circular(10),
             child: Image.asset(
               widget.assetPath,
-              width: 200,
-              height: 200,
+              width: widget.size,
+              height: widget.size,
               fit: BoxFit.contain,
               errorBuilder: (_, e, st) => Container(
-                width: 190,
-                height: 190,
+                width: widget.size,
+                height: widget.size,
                 color: Theme.of(context).colorScheme.surfaceContainerHighest,
                 child: Icon(
                   _iconForOperation(widget.operation),
-                  size: 64,
+                  size: widget.size * 0.32,
                   color: Theme.of(context).colorScheme.primary,
                 ),
               ),

@@ -87,7 +87,8 @@ static void my_application_activate(GApplication* application) {
     gtk_window_set_title(window, "app");
   }
 
-  gtk_window_set_default_size(window, 1280, 720);
+  // Start near the minimum comfortable width for four icon panels.
+  gtk_window_set_default_size(window, 860, 620);
   set_window_icon(window);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();

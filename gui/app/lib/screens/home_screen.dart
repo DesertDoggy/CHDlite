@@ -325,55 +325,64 @@ class _HomeScreenState extends State<HomeScreen> {
           // Top: 4 operation buttons — clipBehavior: none so scale animation can overflow
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 16),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  mainAxisSize: MainAxisSize.min,
-                  spacing: 0,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final iconSize = ((constraints.maxWidth - 16) / 4).clamp(120.0, 280.0);
+                return Column(
                   children: [
-                    DropIconButton(
-                      assetPath: 'assets/CHD read Icon1.png',
-                      operation: ChdOperation.read,
-                      onFilesDropped: _onFilesDropped,
-                      isProcessing: _isProcessing,
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      spacing: 0,
+                      children: [
+                        DropIconButton(
+                          assetPath: 'assets/CHD read Icon1.png',
+                          operation: ChdOperation.read,
+                          onFilesDropped: _onFilesDropped,
+                          isProcessing: _isProcessing,
+                          size: iconSize,
+                        ),
+                        DropIconButton(
+                          assetPath: 'assets/CHDcomp Icon1.png',
+                          operation: ChdOperation.compress,
+                          onFilesDropped: _onFilesDropped,
+                          isProcessing: _isProcessing,
+                          size: iconSize,
+                        ),
+                        DropIconButton(
+                          assetPath: 'assets/Groove-Title.png',
+                          operation: ChdOperation.extract,
+                          onFilesDropped: _onFilesDropped,
+                          isProcessing: _isProcessing,
+                          size: iconSize,
+                        ),
+                        DropIconButton(
+                          assetPath: 'assets/CHD hash Icon1.png',
+                          operation: ChdOperation.hash,
+                          onFilesDropped: _onFilesDropped,
+                          isProcessing: _isProcessing,
+                          size: iconSize,
+                        ),
+                      ],
                     ),
-                    DropIconButton(
-                      assetPath: 'assets/CHDcomp Icon1.png',
-                      operation: ChdOperation.compress,
-                      onFilesDropped: _onFilesDropped,
-                      isProcessing: _isProcessing,
+                    const SizedBox(height: 8),
+                    Text(
+                      'Comp: Max compression. Slow.',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontSize: 18,
+                      ),
                     ),
-                    DropIconButton(
-                      assetPath: 'assets/Groove-Title.png',
-                      operation: ChdOperation.extract,
-                      onFilesDropped: _onFilesDropped,
-                      isProcessing: _isProcessing,
-                    ),
-                    DropIconButton(
-                      assetPath: 'assets/CHD hash Icon1.png',
-                      operation: ChdOperation.hash,
-                      onFilesDropped: _onFilesDropped,
-                      isProcessing: _isProcessing,
+                    Text(
+                      'Lite: Fast.',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontSize: 18,
+                      ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Comp: Max compression. Slow.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontSize: 18,
-                  ),
-                ),
-                Text(
-                  'Lite: Fast.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontSize: 18,
-                  ),
-                ),
-              ],
+                );
+              },
             ),
           ),
           const Divider(height: 1),

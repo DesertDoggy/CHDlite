@@ -8,6 +8,7 @@
 #include "chd_api.hpp"
 
 #include <atomic>
+#include <filesystem>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -182,6 +183,46 @@ CHDLITE_API char* chdlite_read(const char* chd_path)
     g_cancel.store(false);
 
     try {
+        if (!chdlite::ChdReader::is_chd_file(chd_path)) {
+            namespace fs = std::filesystem;
+            auto det = chdlite::detect_input(chd_path, true);
+
+            uint64_t file_size = 0;
+            std::error_code ec;
+            if (fs::exists(chd_path, ec)) {
+                file_size = static_cast<uint64_t>(fs::file_size(chd_path, ec));
+                if (ec) file_size = 0;
+            }
+
+            const char* detected_type = "raw";
+            if (det.format == "cd") detected_type = "cdrom";
+            else if (det.format == "dvd") detected_type = "dvd";
+
+            std::ostringstream js;
+            js << "{\"success\":true"
+               << ",\"version\":0"
+               << ",\"logical_bytes\":" << file_size
+               << ",\"hunk_bytes\":0"
+               << ",\"hunk_count\":0"
+               << ",\"unit_bytes\":0"
+               << ",\"unit_count\":0"
+               << ",\"compressed\":false"
+               << ",\"has_parent\":false"
+               << ",\"content_type\":\"" << detected_type << "\""
+               << ",\"codecs\":[]"
+               << ",\"sha1\":\"\""
+               << ",\"raw_sha1\":\"\""
+               << ",\"parent_sha1\":\"\""
+               << ",\"num_tracks\":0"
+               << ",\"is_gdrom\":false"
+               << ",\"platform\":\"" << json_escape(chdlite::game_platform_name(det.game_platform)) << "\""
+               << ",\"title\":\"" << json_escape(det.title) << "\""
+               << ",\"manufacturer_id\":\"" << json_escape(det.manufacturer_id) << "\""
+               << "}";
+
+            return dup_str(js.str());
+        }
+
         chdlite::ChdReader reader;
         reader.open(chd_path);
         auto hdr = reader.read_header();
@@ -286,6 +327,36 @@ CHDLITE_API char* chdlite_extract(const char* chd_path,
     g_cancel.store(false);
 
     try {
+        if (!chdlite::ChdReader::is_chd_file(chd_path)) {
+            chdlite::ArchiveOptions aopts;
+            aopts.progress_callback = make_progress();
+            aopts.log_callback = make_log();
+
+            std::string out;
+            if (output_dir && *output_dir) {
+                out = output_dir;
+            } else {
+                out = chd_path;
+                auto dot = out.rfind('.');
+                if (dot != std::string::npos) out = out.substr(0, dot);
+                out += ".chd";
+            }
+
+            chdlite::ChdArchiver archiver;
+            auto ares = archiver.archive(chd_path, out, aopts);
+            if (!ares.success)
+                return json_error(ares.error_message);
+
+            std::ostringstream js;
+            js << "{\"success\":true"
+               << ",\"output_path\":\"" << json_escape(ares.output_path) << "\""
+               << ",\"bytes_written\":" << ares.output_bytes
+               << ",\"detected_type\":\"create\""
+               << ",\"files\":[\"" << json_escape(ares.output_path) << "\"]"
+               << "}";
+            return dup_str(js.str());
+        }
+
         chdlite::ExtractOptions opts;
         if (output_dir && *output_dir) opts.output_dir = output_dir;
         opts.split_bin = (split_bin != 0);

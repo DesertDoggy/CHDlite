@@ -8,11 +8,6 @@ import '../widgets/output_display.dart';
 
 enum ChdOperation { read, compress, extract, hash }
 
-/// File extensions accepted per operation.
-const _chdExtensions = {'.chd'};
-const _sourceExtensions = {'.cue', '.bin', '.iso', '.gdi', '.toc', '.img', '.raw'};
-const _allDiscExtensions = {..._chdExtensions, ..._sourceExtensions};
-
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -41,27 +36,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _outputLines.add('No input files.');
       });
       return;
-    }
-
-    // For Comp/Lite: auto-route based on file type (.chd → extract, source → compress)
-    if (operation == ChdOperation.compress) {
-      final chdPaths =
-          validPaths.where((p) => _chdExtensions.contains('.${p.split('.').last.toLowerCase()}')).toList();
-      final nonChdPaths = validPaths.where((p) => !chdPaths.contains(p)).toList();
-
-      if (chdPaths.isNotEmpty && nonChdPaths.isNotEmpty) {
-        // Mixed: process extracts then compress separately
-        _startOperation(ChdOperation.extract, chdPaths, settings);
-        Future.delayed(const Duration(milliseconds: 300), () {
-          _startOperation(ChdOperation.compress, nonChdPaths, settings);
-        });
-        return;
-      } else if (chdPaths.isNotEmpty) {
-        // All CHDs → extract
-        _startOperation(ChdOperation.extract, chdPaths, settings);
-        return;
-      }
-      // All non-CHD files → compress (fall through)
     }
 
     _startOperation(operation, validPaths, settings);

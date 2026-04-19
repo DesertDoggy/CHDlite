@@ -1936,6 +1936,19 @@ int main(int argc, char** argv)
     init_log(argc, argv);
 
     auto args = parse_args(argc, argv);
+
+    // Allow command-less flag form: `chdlite -i <path>` behaves like `chdlite <path>`.
+    // If argv[1] is a flag and input is provided, infer command from binary mode.
+    if (!args.input.empty() && !args.command.empty() && args.command.front() == '-')
+    {
+        if (mode == BinaryMode::Read)
+            args.command = "read";
+        else if (mode == BinaryMode::Hash)
+            args.command = "hash";
+        else
+            args.command = "auto";
+    }
+
     g_input_file = args.input;
 
     // Apply Comp mode: force --best if not conflict with create/extracting

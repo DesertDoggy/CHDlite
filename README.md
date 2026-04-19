@@ -57,14 +57,15 @@ Each release contains four binaries:
 Binary
 Drag&Drop file, files, folder. (Windows)
 
+```
 CLI
 chdlite <command> [options]
 ```
-
+```
 GUI
 Drag&Drop
 Mac.
-
+```
 ### Generic commands
 
 ```

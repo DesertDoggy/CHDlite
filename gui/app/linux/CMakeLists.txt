@@ -74,18 +74,6 @@ set_target_properties(${BINARY_NAME}
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
-# === CHDlite FFI native library ===
-# Bundle pre-built libchdlite_ffi.so alongside the app.
-# Build it first: cmake --build build --target chdlite_ffi (from project root)
-set(CHDLITE_FFI_SO "${CMAKE_CURRENT_SOURCE_DIR}/lib/libchdlite_ffi.so")
-if(EXISTS "${CHDLITE_FFI_SO}")
-  install(FILES "${CHDLITE_FFI_SO}"
-    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
-    COMPONENT Runtime)
-  message(STATUS "CHDlite FFI: bundling ${CHDLITE_FFI_SO}")
-else()
-  message(WARNING "CHDlite FFI: libchdlite_ffi.so not found at ${CHDLITE_FFI_SO} — GUI will run without native operations")
-endif()
 
 
 # === Installation ===
@@ -103,6 +91,21 @@ install(CODE "
 
 set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}/lib")
+
+  # === CHDlite FFI native library ===
+  # Bundle pre-built libchdlite_ffi.so alongside the app.
+  # Build it first: cmake --build build --target chdlite_ffi (from project root)
+  set(CHDLITE_FFI_SO "${CMAKE_CURRENT_SOURCE_DIR}/lib/libchdlite_ffi.so")
+  if(EXISTS "${CHDLITE_FFI_SO}")
+    install(FILES "${CHDLITE_FFI_SO}"
+      DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+      COMPONENT Runtime)
+    message(STATUS "CHDlite FFI: bundling ${CHDLITE_FFI_SO}")
+  else()
+    message(WARNING "CHDlite FFI: libchdlite_ffi.so not found at ${CHDLITE_FFI_SO} — GUI will run without native operations")
+  endif()
+
+
 
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)

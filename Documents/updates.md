@@ -3,6 +3,7 @@
 ### New Binaries
 - chdcomp binary with automatic `--best` compression (CD: `cdzs,cdlz,cdzl,cdfl` / DVD: `zstd,lzma,zlib`) now compresses to chdman default + zstd to get best compression
 - benchmark binary for benchmarking chdman and chdlite
+
 ### Speed Optimization
 - zlib-ng integration
 - xxHash AVX2 auto-dispatch
@@ -37,4 +38,14 @@
 - `verify`, `copy`, `dumpmeta` commands with full option support
 
 ---
+## v0.2.1(GUI App only release)
 
+### New binaries
+- Added D&D GUI App for Mac
+
+### Features
+- Added function to take dir for -o and create output files with same name as input file.
+
+### Bug Fixes
+- Added --version args.
+- Fixed version display to 0.2.1 (Was 0.1.0 in 0.2.0)

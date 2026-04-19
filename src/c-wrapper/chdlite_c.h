@@ -79,7 +79,7 @@ CHDLITE_API char* chdlite_compress(const char* input_path,
 /// Free a string returned by any chdlite_* function.
 CHDLITE_API void chdlite_free(char* ptr);
 
-/// Return library version string (e.g. "0.2.0"). Do NOT free.
+/// Return library version string (e.g. "0.2.1"). Do NOT free.
 CHDLITE_API const char* chdlite_version(void);
 
 #ifdef __cplusplus

@@ -27,62 +27,62 @@ class _HomeScreenState extends State<HomeScreen> {
   void _onFilesDropped(ChdOperation operation, List<String> paths) {
     final settings = SettingsManager.instance;
 
-    // Validate file types
-    final validPaths = <String>[];
-    final rejected = <String>[];
-    for (final p in paths) {
+    // Filter to known disc file extensions
+    final validPaths = paths.where((p) {
       final ext = p.contains('.') ? '.${p.split('.').last.toLowerCase()}' : '';
-      switch (operation) {
-        case ChdOperation.read:
-        case ChdOperation.hash:
-        case ChdOperation.extract:
-          if (_chdExtensions.contains(ext)) {
-            validPaths.add(p);
-          } else {
-            rejected.add(p);
-          }
-        case ChdOperation.compress:
-          if (_sourceExtensions.contains(ext)) {
-            validPaths.add(p);
-          } else {
-            rejected.add(p);
-          }
-      }
+      return _allDiscExtensions.contains(ext);
+    }).toList();
+
+    if (validPaths.isEmpty) {
+      setState(() {
+        _outputLines.add('No valid disc files.');
+        _outputLines.add('Supported: ${_allDiscExtensions.join(', ')}');
+      });
+      return;
     }
 
+    // For Comp/Lite: auto-route based on file type (.chd → extract, source → compress)
+    if (operation == ChdOperation.compress) {
+      final chdPaths =
+          validPaths.where((p) => _chdExtensions.contains('.${p.split('.').last.toLowerCase()}')).toList();
+      final srcPaths =
+          validPaths.where((p) => _sourceExtensions.contains('.${p.split('.').last.toLowerCase()}')).toList();
+
+      if (chdPaths.isNotEmpty && srcPaths.isNotEmpty) {
+        // Mixed: process extracts then compress separately
+        _startOperation(ChdOperation.extract, chdPaths, settings);
+        Future.delayed(const Duration(milliseconds: 300), () {
+          _startOperation(ChdOperation.compress, srcPaths, settings);
+        });
+        return;
+      } else if (chdPaths.isNotEmpty) {
+        // All CHDs → extract
+        _startOperation(ChdOperation.extract, chdPaths, settings);
+        return;
+      }
+      // All source files → compress (fall through)
+    }
+
+    _startOperation(operation, validPaths, settings);
+  }
+
+  void _startOperation(
+    ChdOperation operation,
+    List<String> paths,
+    SettingsManager settings,
+  ) {
     setState(() {
       _isProcessing = true;
       _progress = 0.0;
       _outputLines.clear();
     });
 
-    if (rejected.isNotEmpty) {
-      final expected = (operation == ChdOperation.compress)
-          ? _sourceExtensions.join(', ')
-          : '.chd';
-      setState(() {
-        for (final r in rejected) {
-          _outputLines.add('Skipped (wrong type): $r');
-        }
-        _outputLines.add('Expected: $expected');
-        _outputLines.add('');
-      });
-    }
-
-    if (validPaths.isEmpty) {
-      setState(() {
-        _isProcessing = false;
-        _outputLines.add('No valid files to process.');
-      });
-      return;
-    }
-
     // Build options map from current settings
     final options = <String, dynamic>{};
 
     switch (operation) {
       case ChdOperation.read:
-        break; // no extra options
+        break;
 
       case ChdOperation.hash:
         final algos = settings.getList('hash.algorithms', ['sha1']);
@@ -97,7 +97,6 @@ class _HomeScreenState extends State<HomeScreen> {
         final outDir = settings.get('output.compress_output_dir', '');
         if (outDir.isNotEmpty) options['output_path'] = outDir;
 
-        // Determine codec from comp/lite settings
         final compCodec = settings.get('compress.comp_codec', 'best');
         final liteCodec = settings.get('compress.lite_codec', 'auto');
         if (compCodec == 'chdman') {
@@ -117,7 +116,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     _handler.start(
       operation: operation.name,
-      inputPaths: validPaths,
+      inputPaths: paths,
       options: options,
       onProgress: (p) {
         if (mounted) setState(() => _progress = p);

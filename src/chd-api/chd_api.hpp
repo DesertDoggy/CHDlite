@@ -15,8 +15,8 @@ namespace chdlite {
 
 /// Library version info
 inline constexpr int VERSION_MAJOR = 0;
-inline constexpr int VERSION_MINOR = 1;
-inline constexpr int VERSION_PATCH = 0;
+inline constexpr int VERSION_MINOR = 2;
+inline constexpr int VERSION_PATCH = 1;
 
 /// Quick check if a file is a valid CHD without opening a full reader.
 inline bool is_chd_file(const std::string& path)

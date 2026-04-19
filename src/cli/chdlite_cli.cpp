@@ -383,6 +383,8 @@ static void print_usage()
     std::printf(
         "chdlite - CHD disc image tool v%d.%d.%d\n"
         "\n"
+        "  --version                              Show version and exit\n"
+        "\n"
         "Generic commands (auto-detect format):\n"
         "  extract  <input.chd> [-o output] [options]    Extract CHD to disc image\n"
         "  create   <input>     [-o output.chd] [options] Create CHD from disc image\n"
@@ -440,6 +442,12 @@ static void print_usage()
         "\n",
         VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH
     );
+}
+
+static void print_version()
+{
+    std::printf("chdlite - CHD disc image tool v%d.%d.%d\n",
+                VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH);
 }
 
 static HashFlags parse_hash_flags(const std::string& str)
@@ -1025,13 +1033,21 @@ static int cmd_extract(const Args& args)
     if (!args.output.empty())
     {
         fs::path out(args.output);
-        opts.output_dir = out.parent_path().string();
-        opts.output_filename = out.filename().string();
+        if (fs::is_directory(out) || args.output.back() == '/' || args.output.back() == '\\')
+        {
+            // Directory: use as output_dir, extractor auto-generates filename from input stem
+            opts.output_dir = out.string();
+        }
+        else
+        {
+            opts.output_dir = out.parent_path().string();
+            opts.output_filename = out.filename().string();
 
-        // Detect force_raw / force_bin_cue from output extension
-        std::string ext = out.extension().string();
-        for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (ext == ".bin") opts.force_raw = true;
+            // Detect force_raw / force_bin_cue from output extension
+            std::string ext = out.extension().string();
+            for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (ext == ".bin") opts.force_raw = true;
+        }
     }
     else
     {
@@ -1142,6 +1158,11 @@ static int cmd_create(const Args& args)
         // Default: same name with .chd extension
         fs::path p(args.input);
         output = (p.parent_path() / p.stem()).string() + ".chd";
+    }
+    else if (fs::is_directory(output) || output.back() == '/' || output.back() == '\\')
+    {
+        // Directory: generate filename from input stem
+        output = (fs::path(output) / (fs::path(args.input).stem().string() + ".chd")).string();
     }
 
     // Progress callback
@@ -1364,9 +1385,18 @@ static int cmd_extract_typed(const Args& args, const char* type_hint)
     if (!args.output.empty())
     {
         fs::path out(args.output);
-        opts.output_dir = out.parent_path().string();
-        opts.output_filename = out.filename().string();
-        output_display = args.output;
+        if (fs::is_directory(out) || args.output.back() == '/' || args.output.back() == '\\')
+        {
+            // Directory: use as output_dir, extractor auto-generates filename from input stem
+            opts.output_dir = out.string();
+            output_display = out.string();
+        }
+        else
+        {
+            opts.output_dir = out.parent_path().string();
+            opts.output_filename = out.filename().string();
+            output_display = args.output;
+        }
     }
     else
     {
@@ -1894,6 +1924,12 @@ int main(int argc, char** argv)
     if (argc < 2)
     {
         print_usage();
+        return 0;
+    }
+
+    if (std::strcmp(argv[1], "--version") == 0)
+    {
+        print_version();
         return 0;
     }
 

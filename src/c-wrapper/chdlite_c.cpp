@@ -390,7 +390,7 @@ CHDLITE_API void chdlite_free(char* ptr)
 
 CHDLITE_API const char* chdlite_version(void)
 {
-    static const char ver[] = "0.2.0";
+    static const char ver[] = "0.2.1";
     return ver;
 }
 

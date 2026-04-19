@@ -696,6 +696,18 @@ ArchiveResult ChdArchiver::archive(const std::string& input_path,
                                    const std::string& output_path,
                                    const ArchiveOptions& options)
 {
+    namespace fs = std::filesystem;
+
+    // If output_path is a directory (exists as dir or ends with / or \),
+    // auto-generate output filename from input stem + .chd
+    std::string resolved_output = output_path;
+    if (!output_path.empty()) {
+        bool is_dir = (output_path.back() == '/' || output_path.back() == '\\')
+                   || fs::is_directory(output_path);
+        if (is_dir)
+            resolved_output = (fs::path(output_path) / (fs::path(input_path).stem().string() + ".chd")).string();
+    }
+
     // Apply CUE fixes before anything else
     if (has_fix_cue(options.fix_cue, FixCue::Single) && path_ext_lower(input_path) == ".cue")
         fix_cue_track1(input_path);
@@ -770,11 +782,11 @@ ArchiveResult ChdArchiver::archive(const std::string& input_path,
     ArchiveResult result;
 
     if (fmt == "cd" || fmt == "cue" || fmt == "gdi" || fmt == "toc" || fmt == "nrg" || fmt == "iso")
-        result = archive_cd(input_path, output_path, effective);
+        result = archive_cd(input_path, resolved_output, effective);
     else if (fmt == "dvd")
-        result = archive_dvd(input_path, output_path, effective);
+        result = archive_dvd(input_path, resolved_output, effective);
     else
-        result = archive_raw(input_path, output_path, effective);
+        result = archive_raw(input_path, resolved_output, effective);
 
     // Populate detection results
     result.detected_game_platform    = detection.game_platform;

@@ -449,6 +449,49 @@ chdlite archive game.iso out.chd --codec zstd
 4. **Future Extensions:** Phase 1 focus: CHD ↔ disc images. File→CHD as phase 2
 
 ---
+
+## Build Instructions
+
+### Linux — All C++ Artifacts in One Pass
+
+Builds all C++ targets in a single invocation, including:
+
+- `chdlite` CLI binary
+- Alias binaries (`chdread`, `chdhash`, `chdcomp`)
+- Static libraries (`chdlite`, `mame_chd_core`, `lzma_sdk`)
+- Shared library (`chdlite_shared`)
+- FFI library (`chdlite_ffi`, auto-copied to `gui/app/linux/lib/libchdlite_ffi.so`)
+- Test and benchmark binaries
+
+**Quick build:**
+
+```bash
+bash scripts/build_all_linux.sh
+```
+
+**With optional flags:**
+
+```bash
+bash scripts/build_all_linux.sh --build-dir build --type Release --jobs 0 --with-flutter
+```
+
+**Options:**
+
+- `--build-dir <path>` — CMake build directory (default: `build`)
+- `--type <Debug|Release|RelWithDebInfo|MinSizeRel>` — CMake build type (default: `Release`)
+- `--jobs <n>` — Parallel build jobs; `0` = auto-detect (default: `0`)
+- `--with-flutter` — Also build Flutter Linux app in `gui/app/` (requires Flutter SDK, clang++, GTK dev packages)
+
+**Notes:**
+
+- FFI library is auto-copied to `gui/app/linux/lib/libchdlite_ffi.so` after the build completes.
+- Flutter Linux build requires `clang++` compiler and GTK development files. Install with:
+  ```bash
+  sudo apt install -y clang libgtk-3-dev pkg-config
+  ```
+- If `cmake` or local tools are unavailable, see project root README for platform-specific setup instructions.
+
+---
 ---
 
 # APPENDIX A: MAME CHD Implementation Reference

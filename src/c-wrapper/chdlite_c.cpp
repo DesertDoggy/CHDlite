@@ -52,6 +52,15 @@ static std::string json_escape(const std::string& s)
     return out;
 }
 
+// Format a uint64 with comma thousands separators (e.g. 1,234,567)
+static std::string big_int_string(uint64_t v)
+{
+    std::string s = std::to_string(v);
+    int ins = static_cast<int>(s.size()) - 3;
+    while (ins > 0) { s.insert(ins, ","); ins -= 3; }
+    return s;
+}
+
 static char* json_error(const std::string& msg)
 {
     return dup_str("{\"success\":false,\"error\":\"" + json_escape(msg) + "\"}");
@@ -97,6 +106,22 @@ static const char* codec_name(chdlite::Codec c)
         case C::CD_FLAC:  return "cdfl";
     }
     return "unknown";
+}
+
+static const char* track_type_str(chdlite::TrackType tt)
+{
+    using T = chdlite::TrackType;
+    switch (tt) {
+        case T::Mode1:        return "MODE1/2048";
+        case T::Mode1Raw:     return "MODE1/2352";
+        case T::Mode2:        return "MODE2/2336";
+        case T::Mode2Form1:   return "MODE2_FORM1";
+        case T::Mode2Form2:   return "MODE2_FORM2";
+        case T::Mode2FormMix: return "MODE2_MIX";
+        case T::Mode2Raw:     return "MODE2/2352";
+        case T::Audio:        return "AUDIO";
+        default:              return "unknown";
+    }
 }
 
 static const char* content_type_name(chdlite::ContentType t)
@@ -198,26 +223,26 @@ CHDLITE_API char* chdlite_read(const char* chd_path)
             if (det.format == "cd") detected_type = "cdrom";
             else if (det.format == "dvd") detected_type = "dvd";
 
+            // Build CLI-style formatted output
+            std::ostringstream fmt;
+            fmt << "File size:    " << big_int_string(file_size) << " bytes\n";
+            if (det.format == "cd")  fmt << "Format:       CD-ROM\n";
+            else if (det.format == "dvd") fmt << "Format:       DVD\n";
+            if (det.game_platform != chdlite::GamePlatform::Unknown) {
+                fmt << "Platform:     " << chdlite::game_platform_name(det.game_platform) << "\n";
+                fmt << "Title:        " << (det.title.empty() ? "N/A" : det.title) << "\n";
+                fmt << "Manufacturer ID: " << (det.manufacturer_id.empty() ? "N/A" : det.manufacturer_id) << "\n";
+            }
+
             std::ostringstream js;
             js << "{\"success\":true"
                << ",\"version\":0"
                << ",\"logical_bytes\":" << file_size
-               << ",\"hunk_bytes\":0"
-               << ",\"hunk_count\":0"
-               << ",\"unit_bytes\":0"
-               << ",\"unit_count\":0"
-               << ",\"compressed\":false"
-               << ",\"has_parent\":false"
                << ",\"content_type\":\"" << detected_type << "\""
-               << ",\"codecs\":[]"
-               << ",\"sha1\":\"\""
-               << ",\"raw_sha1\":\"\""
-               << ",\"parent_sha1\":\"\""
-               << ",\"num_tracks\":0"
-               << ",\"is_gdrom\":false"
                << ",\"platform\":\"" << json_escape(chdlite::game_platform_name(det.game_platform)) << "\""
                << ",\"title\":\"" << json_escape(det.title) << "\""
                << ",\"manufacturer_id\":\"" << json_escape(det.manufacturer_id) << "\""
+               << ",\"formatted\":\"" << json_escape(fmt.str()) << "\""
                << "}";
 
             return dup_str(js.str());
@@ -226,6 +251,61 @@ CHDLITE_API char* chdlite_read(const char* chd_path)
         chdlite::ChdReader reader;
         reader.open(chd_path);
         auto hdr = reader.read_header();
+
+        // Platform detection
+        auto det = reader.detect_game_platform(chdlite::DetectFlags::All, true);
+
+        // Track list (CD/GD only, matching CLI behaviour)
+        std::vector<chdlite::TrackInfo> tracks;
+        if (hdr.content_type == chdlite::ContentType::CDROM ||
+            hdr.content_type == chdlite::ContentType::GDROM)
+        {
+            tracks = reader.get_tracks();
+        }
+
+        // Build CLI-style formatted output
+        std::ostringstream fmt;
+        fmt << "File Version: " << hdr.version << "\n";
+        fmt << "Logical size: " << big_int_string(hdr.logical_bytes) << " bytes\n";
+        fmt << "Hunk Size:    " << big_int_string(hdr.hunk_bytes) << " bytes\n";
+        fmt << "Total Hunks:  " << big_int_string(hdr.hunk_count) << "\n";
+        fmt << "Unit Size:    " << big_int_string(hdr.unit_bytes) << " bytes\n";
+        // Codecs
+        {
+            std::string codec_list;
+            for (int i = 0; i < 4; ++i) {
+                if (hdr.codecs[i] == chdlite::Codec::None) continue;
+                if (!codec_list.empty()) codec_list += ", ";
+                codec_list += codec_name(hdr.codecs[i]);
+            }
+            fmt << "Compression:  " << (codec_list.empty() ? "none" : codec_list) << "\n";
+        }
+        fmt << "Compressed:   " << (hdr.compressed ? "yes" : "no") << "\n";
+        fmt << "Has Parent:   " << (hdr.has_parent ? "yes" : "no") << "\n";
+        fmt << "Content Type: " << content_type_name(hdr.content_type) << "\n";
+        if (!hdr.sha1.empty())        fmt << "SHA-1:        " << hdr.sha1 << "\n";
+        if (!hdr.raw_sha1.empty())    fmt << "Data SHA-1:   " << hdr.raw_sha1 << "\n";
+        if (!hdr.parent_sha1.empty()) fmt << "Parent SHA-1: " << hdr.parent_sha1 << "\n";
+        if (!tracks.empty()) {
+            fmt << "Tracks:       " << tracks.size();
+            if (hdr.is_gdrom) fmt << "  (GD-ROM)";
+            fmt << "\n";
+            for (auto& t : tracks) {
+                char buf[128];
+                std::snprintf(buf, sizeof(buf),
+                    "  Track %02u: %-14s  frames=%u  data=%u sub=%u%s\n",
+                    t.track_number,
+                    t.is_audio ? "AUDIO" : track_type_str(t.type),
+                    t.frames, t.data_size, t.sub_size,
+                    t.is_audio ? " [AUDIO]" : "");
+                fmt << buf;
+            }
+        }
+        if (det.game_platform != chdlite::GamePlatform::Unknown) {
+            fmt << "Platform:     " << chdlite::game_platform_name(det.game_platform) << "\n";
+            fmt << "Title:        " << (det.title.empty() ? "N/A" : det.title) << "\n";
+            fmt << "Manufacturer ID: " << (det.manufacturer_id.empty() ? "N/A" : det.manufacturer_id) << "\n";
+        }
 
         std::ostringstream js;
         js << "{\"success\":true"
@@ -249,8 +329,11 @@ CHDLITE_API char* chdlite_read(const char* chd_path)
            << ",\"parent_sha1\":\"" << json_escape(hdr.parent_sha1) << "\""
            << ",\"num_tracks\":" << hdr.num_tracks
            << ",\"is_gdrom\":" << (hdr.is_gdrom ? "true" : "false")
+           << ",\"platform\":\"" << json_escape(chdlite::game_platform_name(det.game_platform)) << "\""
+           << ",\"title\":\"" << json_escape(det.title) << "\""
+           << ",\"manufacturer_id\":\"" << json_escape(det.manufacturer_id) << "\""
+           << ",\"formatted\":\"" << json_escape(fmt.str()) << "\""
            << "}";
-
         return dup_str(js.str());
     }
     catch (const chdlite::ChdCancelledException&) {

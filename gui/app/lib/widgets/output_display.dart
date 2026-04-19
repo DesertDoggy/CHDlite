@@ -7,6 +7,7 @@ class OutputDisplay extends StatefulWidget {
   final double progress;
   final bool isProcessing;
   final VoidCallback onCancel;
+  final File? tempLogFile;
 
   const OutputDisplay({
     super.key,
@@ -14,6 +15,7 @@ class OutputDisplay extends StatefulWidget {
     required this.progress,
     required this.isProcessing,
     required this.onCancel,
+    this.tempLogFile,
   });
 
   @override
@@ -82,21 +84,25 @@ class _OutputDisplayState extends State<OutputDisplay> {
                   : SelectableRegion(
                       focusNode: FocusNode(),
                       selectionControls: materialTextSelectionControls,
-                      child: ListView.builder(
+                      child: Scrollbar(
                         controller: _scrollController,
-                        padding: const EdgeInsets.all(12),
-                        itemCount: widget.lines.length,
-                        itemBuilder: (context, index) {
-                          final line = widget.lines[index];
-                          return Text(
-                            line,
-                            style: TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 13,
-                              color: _colorForLine(line, theme),
-                            ),
-                          );
-                        },
+                        thumbVisibility: true,
+                        child: ListView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.all(12),
+                          itemCount: widget.lines.length,
+                          itemBuilder: (context, index) {
+                            final line = widget.lines[index];
+                            return Text(
+                              line,
+                              style: TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 13,
+                                color: _colorForLine(line, theme),
+                              ),
+                            );
+                          },
+                        ),
                       ),
                     ),
             ),
@@ -113,7 +119,7 @@ class _OutputDisplayState extends State<OutputDisplay> {
                 ),
               const Spacer(),
               OutlinedButton.icon(
-                onPressed: widget.lines.isEmpty ? null : _openInEditor,
+                onPressed: widget.lines.isEmpty ? null : _openLogFile,
                 icon: const Icon(Icons.open_in_new, size: 16),
                 label: const Text('Open in Editor'),
               ),
@@ -141,25 +147,12 @@ class _OutputDisplayState extends State<OutputDisplay> {
     return theme.colorScheme.onSurface;
   }
 
-  void _openInEditor() async {
-    // Find the last mentioned output file in the lines
-    String? outputFile;
-    for (final line in widget.lines.reversed) {
-      if (line.contains('.hashes') || line.contains('.log')) {
-        // Try to extract a file path
-        final match = RegExp(r'(/[^\s]+|[A-Z]:\\[^\s]+)').firstMatch(line);
-        if (match != null) {
-          outputFile = match.group(0);
-          break;
-        }
-      }
-    }
-
-    if (outputFile != null && File(outputFile).existsSync()) {
-      final uri = Uri.file(outputFile);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri);
-      }
+  void _openLogFile() async {
+    final f = widget.tempLogFile;
+    if (f == null) return;
+    final uri = Uri.file(f.path);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
     }
   }
 }

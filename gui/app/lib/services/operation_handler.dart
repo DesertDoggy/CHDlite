@@ -174,15 +174,10 @@ class OperationHandler {
       SendPort port, String operation, Map<String, dynamic> result) {
     switch (operation) {
       case 'read':
-        port.send(OutputLineMessage(
-            'Type: ${result['content_type']}  Version: ${result['version']}'));
-        port.send(OutputLineMessage(
-            'Size: ${result['logical_bytes']} bytes  '
-            'Hunks: ${result['hunk_count']} × ${result['hunk_bytes']}'));
-        port.send(OutputLineMessage(
-            'Codecs: ${(result['codecs'] as List).join(', ')}'));
-        if ((result['sha1'] as String?)?.isNotEmpty == true) {
-          port.send(OutputLineMessage('SHA1: ${result['sha1']}'));
+        // C++ formats all output lines; just split on newlines and emit each.
+        final formatted = result['formatted'] as String? ?? '';
+        for (final line in formatted.split('\n')) {
+          if (line.isNotEmpty) port.send(OutputLineMessage(line));
         }
 
       case 'hash':

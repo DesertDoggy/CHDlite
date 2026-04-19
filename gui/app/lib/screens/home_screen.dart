@@ -20,6 +20,8 @@ class _HomeScreenState extends State<HomeScreen> {
   double _progress = 0.0;
   bool _isProcessing = false;
   final OperationHandler _handler = OperationHandler();
+  File? _tempLogFile;
+  IOSink? _tempLogSink;
 
   void _onFilesDropped(ChdOperation operation, List<String> paths) {
     _handleDropped(operation, paths);
@@ -74,11 +76,25 @@ class _HomeScreenState extends State<HomeScreen> {
     return result;
   }
 
+  Future<void> _startTempLog() async {
+    // Close and delete any previous temp log
+    await _tempLogSink?.close();
+    try { await _tempLogFile?.delete(); } catch (_) {}
+    _tempLogFile = null;
+    _tempLogSink = null;
+
+    final tmp = Directory.systemTemp;
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    _tempLogFile = File('${tmp.path}/chdlite_output_$ts.txt');
+    _tempLogSink = _tempLogFile!.openWrite();
+  }
+
   void _startOperation(
     ChdOperation operation,
     List<String> paths,
     SettingsManager settings,
   ) {
+    _startTempLog(); // fire and forget — sync enough for append writes
     setState(() {
       _isProcessing = true;
       _progress = 0.0;
@@ -131,10 +147,12 @@ class _HomeScreenState extends State<HomeScreen> {
       },
       onOutput: (line) {
         if (mounted) {
+          _tempLogSink?.writeln(line);
           setState(() => _outputLines.add(line));
         }
       },
-      onComplete: (success, error) {
+      onComplete: (success, error) async {
+        await _tempLogSink?.flush();
         if (mounted) {
           setState(() {
             _isProcessing = false;
@@ -147,10 +165,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _onCancel() {
     _handler.cancel();
+    _tempLogSink?.writeln('Cancelled by user.');
+    _tempLogSink?.flush();
     setState(() {
       _isProcessing = false;
       _outputLines.add('Cancelled by user.');
     });
+  }
+
+  @override
+  void dispose() {
+    _tempLogSink?.close();
+    // Best-effort delete — ignore errors
+    _tempLogFile?.delete().catchError((_) => _tempLogFile!);
+    super.dispose();
   }
 
   @override
@@ -236,6 +264,7 @@ class _HomeScreenState extends State<HomeScreen> {
               progress: _progress,
               isProcessing: _isProcessing,
               onCancel: _onCancel,
+              tempLogFile: _tempLogFile,
             ),
           ),
         ],

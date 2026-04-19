@@ -372,10 +372,13 @@ struct Args
                                         //   "disc" = next to input file
     int         cue_style = -1;          // -style 0/1/2 → CueStyle::Chdman/Redump/RedumpCatalog (-1 = default)
     bool        best = false;             // --best → maximum compression ratio
+    bool        chdman_compat = false;    // --chdman / -chdman → legacy chdman defaults
     bool        fix = false;              // --fix → verify: fix SHA1 mismatch by updating header
     std::string meta_tag;                 // -t → dumpmeta: 4-char metadata tag (e.g. "CHTR")
     int         meta_index = 0;           // -ix → dumpmeta: metadata index (default: 0)
     std::string result_format;            // --result text|json|lot|svg etc; controls pretty log (on by default for read/hash)
+    bool        parse_error = false;
+    std::string parse_error_message;
 };
 
 static void print_usage()
@@ -433,7 +436,8 @@ static void print_usage()
         "  --log-dir <path>            Directory for chdlite.log  (default: <exe>/logs/)\n"
         "  --result <format>           Pretty log output: on|off (read/hash default: on; extract/create default: off)\n"
         "                              Formats: text, json, lot, svg, etc. (for hash output)\n"
-        "  --best                      Maximum compression (cdlz+cdzs+cdzl+cdfl for CD, zstd+lzma+zlib+huff for DVD)\n"
+        "  --best, -best               Maximum compression (cdlz+cdzs+cdzl+cdfl for CD, zstd+lzma+zlib+huff for DVD)\n"
+        "  --chdman, -chdman           Use chdman-compatible legacy default codec selection\n"
         "  --fix                       Verify: fix SHA1 mismatch by updating header\n"
         "  -t, --tag <tag>             Dumpmeta: 4-char metadata tag (e.g. CHTR, DVD )\n"
         "  -ix, --index <n>            Dumpmeta: metadata index (default: 0)\n"
@@ -487,6 +491,68 @@ static Codec parse_codec(const std::string& s)
     return Codec::None;
 }
 
+// Parse -c/--compression into ArchiveOptions.
+// Returns false and sets err on invalid/unknown codec strings.
+static bool apply_compression_arg(const std::string& compression_arg,
+                                  ArchiveOptions& opts,
+                                  std::string& err)
+{
+    if (compression_arg.empty())
+        return true;
+
+    std::string s = compression_arg;
+    for (auto& c : s)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    if (s == "none") {
+        err = "uncompressed CHD (-c none) is not yet supported";
+        return false;
+    }
+    if (s == "chdman") {
+        err = "'-c chdman' was removed; use --chdman (or -chdman)";
+        return false;
+    }
+
+    int slot = 0;
+    size_t pos = 0;
+    while (pos <= s.size())
+    {
+        auto comma = s.find(',', pos);
+        std::string tok = (comma == std::string::npos)
+            ? s.substr(pos) : s.substr(pos, comma - pos);
+
+        while (!tok.empty() && tok.front() == ' ') tok.erase(tok.begin());
+        while (!tok.empty() && tok.back() == ' ') tok.pop_back();
+
+        if (tok.empty()) {
+            err = "invalid compression list: empty codec token";
+            return false;
+        }
+        if (tok == "none") {
+            err = "codec 'none' cannot be mixed; use only -c none";
+            return false;
+        }
+
+        Codec c = parse_codec(tok);
+        if (c == Codec::None) {
+            err = "unknown codec in -c/--compression: '" + tok + "'";
+            return false;
+        }
+        if (slot >= 4) {
+            err = "too many codecs in -c/--compression (max 4)";
+            return false;
+        }
+
+        opts.compression[slot++] = c;
+
+        if (comma == std::string::npos)
+            break;
+        pos = comma + 1;
+    }
+
+    return true;
+}
+
 static Args parse_args(int argc, char** argv)
 {
     Args a;
@@ -494,9 +560,13 @@ static Args parse_args(int argc, char** argv)
 
     a.command = argv[1];
 
-    // Check for bare input file as second arg (generic commands)
-    int start = 2;
-    if (argc > 2 && argv[2][0] != '-')
+    // Parse starts at argv[1] when argv[1] is a flag (command inferred later).
+    // Otherwise parse from argv[2] after explicit command token.
+    int start = (argv[1][0] == '-') ? 1 : 2;
+    // Only do this when argv[1] is an actual command token.
+    // If argv[1] starts with '-', command is inferred later (auto/read/hash),
+    // so argv[2] may be a value for that flag (e.g. "-c chdman").
+    if (argc > 2 && argv[1][0] != '-' && argv[2][0] != '-')
     {
         a.input = argv[2];
         start = 3;
@@ -534,7 +604,8 @@ static Args parse_args(int argc, char** argv)
         else if (arg == "--hash-dir")                   a.hash_dir = next();
         else if (arg == "--result")                     a.result_format = next();
         else if (arg == "-style" || arg == "--style" || arg == "--cue-style") a.cue_style = std::stoi(next());
-        else if (arg == "--best")                       a.best = true;
+        else if (arg == "--best" || arg == "-best")    a.best = true;
+        else if (arg == "--chdman" || arg == "-chdman") a.chdman_compat = true;
         else if (arg == "--fix")                        a.fix = true;
         else if (arg == "-t" || arg == "--tag")         a.meta_tag = next();
         else if (arg == "-ix" || arg == "--index")      a.meta_index = std::stoi(next());
@@ -549,6 +620,11 @@ static Args parse_args(int argc, char** argv)
         }
         else
         {
+            if (!arg.empty() && arg[0] == '-') {
+                a.parse_error = true;
+                a.parse_error_message = "Unknown option: " + arg;
+                return a;
+            }
             // Bare argument: treat as input if input is empty, else output
             if (a.input.empty()) a.input = arg;
             else if (a.output.empty()) a.output = arg;
@@ -1121,37 +1197,16 @@ static int cmd_create(const Args& args)
     opts.num_processors = args.num_processors;
     opts.detect_title = true;
     opts.best = args.best;
+    opts.chdman_compat = args.chdman_compat;
 
     // Parse compression
     if (!args.compression.empty())
     {
-        if (args.compression == "none")
+        std::string cerr;
+        if (!apply_compression_arg(args.compression, opts, cerr))
         {
-            std::fprintf(stderr, "Error: uncompressed CHD (-c none) is not yet supported\n");
+            std::fprintf(stderr, "Error: %s\n", cerr.c_str());
             return 1;
-        }
-        else if (args.compression == "chdman")
-        {
-            opts.chdman_compat = true;
-        }
-        else
-        {
-            // Parse comma-separated codec list
-            std::string s = args.compression;
-            int slot = 0;
-            size_t pos = 0;
-            while (pos < s.size() && slot < 4)
-            {
-                auto comma = s.find(',', pos);
-                std::string tok = (comma == std::string::npos)
-                    ? s.substr(pos) : s.substr(pos, comma - pos);
-                // trim
-                while (!tok.empty() && tok.front() == ' ') tok.erase(tok.begin());
-                while (!tok.empty() && tok.back() == ' ') tok.pop_back();
-                for (auto& c : tok) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                opts.compression[slot++] = parse_codec(tok);
-                pos = (comma == std::string::npos) ? s.size() : comma + 1;
-            }
         }
     }
 
@@ -1182,6 +1237,8 @@ static int cmd_create(const Args& args)
         std::printf("Compression:  %s\n", codec_list_string(opts.compression).c_str());
     else if (opts.best)
         std::printf("Compression:  best (cdlz+cdzs+cdzl+cdfl for CD, zstd+lzma+zlib+huff for DVD)\n");
+    else if (opts.chdman_compat)
+        std::printf("Compression:  chdman legacy defaults\n");
     else
         std::printf("Compression:  auto (smart defaults)\n");
     if (opts.hunk_bytes)
@@ -1265,6 +1322,7 @@ static int cmd_create_typed(const Args& args, const char* type_hint)
     opts.num_processors = args.num_processors;
     opts.detect_title = true;
     opts.best = args.best;
+    opts.chdman_compat = args.chdman_compat;
 
     // Warn when createraw/createhd is used without -us
     if (std::string(type_hint) == "raw" && args.unit_size == 0)
@@ -1272,31 +1330,11 @@ static int cmd_create_typed(const Args& args, const char* type_hint)
 
     if (!args.compression.empty())
     {
-        if (args.compression == "none")
+        std::string cerr;
+        if (!apply_compression_arg(args.compression, opts, cerr))
         {
-            std::fprintf(stderr, "Error: uncompressed CHD (-c none) is not yet supported\n");
+            std::fprintf(stderr, "Error: %s\n", cerr.c_str());
             return 1;
-        }
-        else if (args.compression == "chdman")
-        {
-            opts.chdman_compat = true;
-        }
-        else
-        {
-            std::string s = args.compression;
-            int slot = 0;
-            size_t pos = 0;
-            while (pos < s.size() && slot < 4)
-            {
-                auto comma = s.find(',', pos);
-                std::string tok = (comma == std::string::npos)
-                    ? s.substr(pos) : s.substr(pos, comma - pos);
-                while (!tok.empty() && tok.front() == ' ') tok.erase(tok.begin());
-                while (!tok.empty() && tok.back() == ' ') tok.pop_back();
-                for (auto& c : tok) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                opts.compression[slot++] = parse_codec(tok);
-                pos = (comma == std::string::npos) ? s.size() : comma + 1;
-            }
         }
     }
 
@@ -1308,6 +1346,12 @@ static int cmd_create_typed(const Args& args, const char* type_hint)
         std::printf("Parent CHD:   %s\n", args.input_parent.c_str());
     if (opts.has_custom_compression())
         std::printf("Compression:  %s\n", codec_list_string(opts.compression).c_str());
+    else if (opts.best)
+        std::printf("Compression:  best (cdlz+cdzs+cdzl+cdfl for CD, zstd+lzma+zlib+huff for DVD)\n");
+    else if (opts.chdman_compat)
+        std::printf("Compression:  chdman legacy defaults\n");
+    else
+        std::printf("Compression:  auto (smart defaults)\n");
     if (opts.hunk_bytes)
         std::printf("Hunk size:    %s bytes\n", big_int_string(opts.hunk_bytes).c_str());
 
@@ -1572,33 +1616,15 @@ static int cmd_copy(const Args& args)
     opts.unit_bytes = args.unit_size;
     opts.num_processors = args.num_processors;
     opts.best = args.best;
+    opts.chdman_compat = args.chdman_compat;
 
     if (!args.compression.empty())
     {
-        if (args.compression == "none")
+        std::string cerr;
+        if (!apply_compression_arg(args.compression, opts, cerr))
         {
-            std::fprintf(stderr, "Error: uncompressed CHD (-c none) is not yet supported\n");
+            std::fprintf(stderr, "Error: %s\n", cerr.c_str());
             return 1;
-        }
-        else if (args.compression == "chdman")
-        {
-            opts.chdman_compat = true;
-        }
-        else {
-        std::string s = args.compression;
-        int slot = 0;
-        size_t pos = 0;
-        while (pos < s.size() && slot < 4)
-        {
-            auto comma = s.find(',', pos);
-            std::string tok = (comma == std::string::npos)
-                ? s.substr(pos) : s.substr(pos, comma - pos);
-            while (!tok.empty() && tok.front() == ' ') tok.erase(tok.begin());
-            while (!tok.empty() && tok.back() == ' ') tok.pop_back();
-            for (auto& c : tok) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            opts.compression[slot++] = parse_codec(tok);
-            pos = (comma == std::string::npos) ? s.size() : comma + 1;
-        }
         }
     }
 
@@ -1608,6 +1634,12 @@ static int cmd_copy(const Args& args)
     std::printf("Output CHD:   %s\n", output.c_str());
     if (opts.has_custom_compression())
         std::printf("Compression:  %s\n", codec_list_string(opts.compression).c_str());
+    else if (opts.best)
+        std::printf("Compression:  best (cdlz+cdzs+cdzl+cdfl for CD, zstd+lzma+zlib+huff for DVD)\n");
+    else if (opts.chdman_compat)
+        std::printf("Compression:  chdman legacy defaults\n");
+    else
+        std::printf("Compression:  auto (smart defaults)\n");
     if (opts.hunk_bytes)
         std::printf("Hunk size:    %s bytes\n", big_int_string(opts.hunk_bytes).c_str());
 
@@ -1940,6 +1972,12 @@ int main(int argc, char** argv)
     init_log(argc, argv);
 
     auto args = parse_args(argc, argv);
+    if (args.parse_error)
+    {
+        std::fprintf(stderr, "Error: %s\n\n", args.parse_error_message.c_str());
+        print_usage();
+        return 1;
+    }
 
     // Allow command-less flag form: `chdlite -i <path>` behaves like `chdlite <path>`.
     // If argv[1] is a flag and input is provided, infer command from binary mode.

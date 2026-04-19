@@ -70,6 +70,7 @@ auto     <input>     [options]                 Auto: .chd → extract, else → 
 ### Compression defaults
 
 CHDlite picks codecs automatically based on content type with priority on speed, unless emulator compatibility issues. You can override with `-c`.
+ex: "-c zlib", "-c zlib,zstd,lzma"
 
 | Content | Default | Reason |
 |---------|---------|--------|
@@ -77,8 +78,8 @@ CHDlite picks codecs automatically based on content type with priority on speed,
 | DVD — PS2 | `zlib` | Some Android PS2 emulators only support `zlib` for DVD CHDs. Using ZSTD would break compatibility on mobile. |
 | DVD — PSP / generic | `zstd` | Fast decompression, especially when hashing CHD contents — which requires reading and decompressing every hunk. |
 
-**`--best` preset**: `cdlz, cdzs, cdzl, cdfl` for CD / `zstd, lzma, zlib, huff` for DVD — maximises compression. slowest. Use `chdcomp` binary for automatic `--best` compression.
-**`-c chdman` preset**: chdman default`cdlz, cdzl, cdfl` for CD / `lzma, zlib, huff` -usually maximises compression.  slow but faster than --best.
+**`--best, -best` codec preset**: `cdlz, cdzs, cdzl, cdfl` for CD / `zstd, lzma, zlib, huff` for DVD — maximises compression. slowest. Use `chdcomp` binary for automatic `--best` compression.
+**`--chdman, -chdman` codec preset**: chdman default`cdlz, cdzl, cdfl` for CD / `lzma, zlib, huff` -usually maximises compression.  slow but faster than --best.
 
 Single codec is faster than chdman due to simd optimization
 Multi codec is about 0-10% slower than chdman due to unknown bottleneck probably due to adding architecture changes for simultaneous hashing etc.

@@ -51,3 +51,7 @@
 - Fixed version display to 0.2.1 (Was 0.1.0 in 0.2.0)
 - Fixed read not reading platform for ps1,ps2,pce chd.
 - Fixed read not checking magic sector for pce even on cue read.
+- Fixed -c chdman not passing codecs.
+  delete chdman from -c --compression options, and only take actual codecs.
+- Add -chdman, --chdman option for original codec compression.
+- Add -best in addition to --best.

@@ -161,6 +161,18 @@ class _HomeScreenState extends State<HomeScreen> {
     // Build options map from current settings
     final options = <String, dynamic>{};
 
+    int cueStyleToInt(String style) {
+      switch (style) {
+        case 'redump':
+          return 1;
+        case 'redump_catalog':
+          return 2;
+        case 'chdman':
+        default:
+          return 0;
+      }
+    }
+
     switch (operation) {
       case ChdOperation.read:
         break;
@@ -174,6 +186,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final outDir = settings.get('output.extract_output_dir', '');
         if (outDir.isNotEmpty) options['output_dir'] = outDir;
         options['split_bin'] = settings.getBool('extract.split_bin', true);
+        options['cue_style'] = cueStyleToInt(settings.get('extract.cue_style', 'chdman'));
         break;
 
       case ChdOperation.compress:
@@ -196,6 +209,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final hunk = int.tryParse(settings.get('compress.hunk_size', '0')) ?? 0;
         final unit = int.tryParse(settings.get('compress.unit_size', '0')) ?? 0;
         final threads = int.tryParse(settings.get('compress.threads', '0')) ?? 0;
+        options['cue_style'] = cueStyleToInt(settings.get('extract.cue_style', 'chdman'));
         if (hunk > 0) options['hunk_size'] = hunk;
         if (unit > 0) options['unit_size'] = unit;
         if (threads > 0) options['threads'] = threads;

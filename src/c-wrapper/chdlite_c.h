@@ -59,9 +59,11 @@ CHDLITE_API char* chdlite_hash(const char* chd_path, const char* algorithms);
 /// Extract CHD to CUE/BIN or raw image.
 /// @param output_dir  Output directory (NULL = same dir as input).
 /// @param split_bin   1 = per-track BIN files, 0 = single BIN.
+/// @param cue_style   0=chdman 1=redump 2=redump+catalog.
 CHDLITE_API char* chdlite_extract(const char* chd_path,
                                   const char* output_dir,
-                                  int split_bin);
+                                  int split_bin,
+                                  int cue_style);
 
 /// Compress input (CUE/BIN/ISO/GDI) to CHD.
 /// @param output_path  Output CHD path (NULL = input stem + .chd).
@@ -69,12 +71,14 @@ CHDLITE_API char* chdlite_extract(const char* chd_path,
 /// @param hunk_size    Hunk size in bytes (0 = auto).
 /// @param unit_size    Unit size in bytes (0 = auto).
 /// @param threads      Number of threads (0 = auto).
+/// @param cue_style    For CHD input (extract path): 0=chdman 1=redump 2=redump+catalog.
 CHDLITE_API char* chdlite_compress(const char* input_path,
                                    const char* output_path,
                                    const char* codec,
                                    int hunk_size,
                                    int unit_size,
-                                   int threads);
+                                   int threads,
+                                   int cue_style);
 
 /// Free a string returned by any chdlite_* function.
 CHDLITE_API void chdlite_free(char* ptr);

@@ -40,6 +40,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   // Other settings
   bool _splitBin = true;
+  String _cueStyle = 'chdman'; // chdman|redump|redump_catalog
   String _logLevel = 'info';
 
   // Compression settings
@@ -52,8 +53,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _extractDirCtrl = TextEditingController(text: _settings.get('output.extract_output_dir', ''));
     _compressDirCtrl = TextEditingController(text: _settings.get('output.compress_output_dir', ''));
     _logDirCtrl = TextEditingController(text: _settings.get('output.log_output_dir', 'desktop'));
-    _hunkSizeCtrl = TextEditingController(text: _settings.get('compress.hunk_size', '65536'));
-    _unitSizeCtrl = TextEditingController(text: _settings.get('compress.unit_size', '2048'));
+    _hunkSizeCtrl = TextEditingController(text: _settings.get('compress.hunk_size', '0'));
+    _unitSizeCtrl = TextEditingController(text: _settings.get('compress.unit_size', '0'));
     _threadsCtrl = TextEditingController(text: _settings.get('compress.threads', '0'));
     _liteCodecListCtrl = TextEditingController(text: _settings.get('compress.lite_codec_list', 'zstd,lzma,zlib,huff'));
 
@@ -65,6 +66,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _xxh3 = algorithms.contains('xxh3');
 
     _splitBin = _settings.getBool('extract.split_bin', true);
+    _cueStyle = _settings.get('extract.cue_style', 'chdman');
     _logLevel = _settings.get('app.log_level', 'info');
 
     _logRead = _settings.getBool('log.read', true);
@@ -109,6 +111,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _settings.setList('hash.algorithms', algorithms);
 
     _settings.setBool('extract.split_bin', _splitBin);
+    _settings.set('extract.cue_style', _cueStyle);
     _settings.set('app.log_level', _logLevel);
 
     _settings.setBool('log.read', _logRead);
@@ -151,13 +154,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
       body: DefaultTabController(
-        length: 4,
+        length: 5,
         child: Column(
           children: [
             const TabBar(
               tabs: [
                 Tab(text: 'Output'),
                 Tab(text: 'Compression'),
+                Tab(text: 'Extract'),
                 Tab(text: 'Hash'),
                 Tab(text: 'Advanced'),
               ],
@@ -167,6 +171,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   _buildOutputTab(),
                   _buildCompressionTab(),
+                  _buildExtractTab(),
                   _buildHashTab(),
                   _buildAdvancedTab(),
                 ],
@@ -216,13 +221,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           dense: true,
           value: _logCompress,
           onChanged: (v) => setState(() => _logCompress = v!),
-        ),
-        const SizedBox(height: 16),
-        SwitchListTile(
-          title: const Text('Split BIN files'),
-          subtitle: const Text('Extract to per-track BIN files'),
-          value: _splitBin,
-          onChanged: (v) => setState(() => _splitBin = v),
         ),
       ],
     );
@@ -277,7 +275,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           controller: _hunkSizeCtrl,
           decoration: const InputDecoration(
             labelText: 'Hunk Size (bytes)',
-            helperText: 'Default: 65536',
+            helperText: 'Default: 0 (auto, recommended for cue/gdi)',
             border: OutlineInputBorder(),
           ),
           keyboardType: TextInputType.number,
@@ -287,7 +285,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           controller: _unitSizeCtrl,
           decoration: const InputDecoration(
             labelText: 'Unit Size (bytes)',
-            helperText: 'Default: 2048',
+            helperText: 'Default: 0 (auto)',
             border: OutlineInputBorder(),
           ),
           keyboardType: TextInputType.number,
@@ -301,6 +299,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
             border: OutlineInputBorder(),
           ),
           keyboardType: TextInputType.number,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildExtractTab() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const Text('CUE/GDI Style', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<String>(
+          initialValue: _cueStyle,
+          decoration: const InputDecoration(
+            labelText: 'Metadata style',
+            border: OutlineInputBorder(),
+          ),
+          items: const [
+            DropdownMenuItem(value: 'chdman', child: Text('chdman (default)')),
+            DropdownMenuItem(value: 'redump', child: Text('redump')),
+            DropdownMenuItem(value: 'redump_catalog', child: Text('redump + catalog')),
+          ],
+          onChanged: (v) => setState(() => _cueStyle = v ?? 'chdman'),
+        ),
+        const SizedBox(height: 16),
+        SwitchListTile(
+          title: const Text('Split BIN files'),
+          subtitle: const Text('Extract to per-track BIN files'),
+          value: _splitBin,
+          onChanged: (v) => setState(() => _splitBin = v),
         ),
       ],
     );

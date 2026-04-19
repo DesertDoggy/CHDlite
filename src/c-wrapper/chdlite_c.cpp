@@ -223,6 +223,17 @@ static std::string normalize_codec_arg(std::string s)
     return s;
 }
 
+static chdlite::CueStyle parse_cue_style_int(int value)
+{
+    switch (value) {
+    case 1: return chdlite::CueStyle::Redump;
+    case 2: return chdlite::CueStyle::RedumpCatalog;
+    case 0:
+    default:
+        return chdlite::CueStyle::Chdman;
+    }
+}
+
 static void clear_codecs(std::array<chdlite::Codec, 4>& codecs)
 {
     codecs.fill(chdlite::Codec::None);
@@ -613,7 +624,8 @@ CHDLITE_API char* chdlite_hash(const char* chd_path, const char* algorithms)
 // -----------------------------------------------------------------------
 CHDLITE_API char* chdlite_extract(const char* chd_path,
                                   const char* output_dir,
-                                  int split_bin)
+                                  int split_bin,
+                                  int cue_style)
 {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_cancel.store(false);
@@ -652,6 +664,7 @@ CHDLITE_API char* chdlite_extract(const char* chd_path,
         chdlite::ExtractOptions opts;
         if (output_dir && *output_dir) opts.output_dir = output_dir;
         opts.split_bin = (split_bin != 0);
+        opts.cue_style = parse_cue_style_int(cue_style);
         opts.progress_callback = make_progress();
         opts.log_callback = make_log();
 
@@ -691,7 +704,8 @@ CHDLITE_API char* chdlite_compress(const char* input_path,
                                    const char* codec,
                                    int hunk_size,
                                    int unit_size,
-                                   int threads)
+                                   int threads,
+                                   int cue_style)
 {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_cancel.store(false);
@@ -706,6 +720,7 @@ CHDLITE_API char* chdlite_compress(const char* input_path,
             eopts.input_path = in;
             if (output_path && *output_path) eopts.output_path = output_path;
             eopts.split_bin = false;
+            eopts.cue_style = parse_cue_style_int(cue_style);
             eopts.progress_callback = make_progress();
             eopts.log_callback = make_log();
 

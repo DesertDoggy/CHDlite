@@ -16,10 +16,10 @@ typedef _ReadNative = Pointer<Utf8> Function(Pointer<Utf8> chdPath);
 typedef _HashNative = Pointer<Utf8> Function(
     Pointer<Utf8> chdPath, Pointer<Utf8> algorithms);
 typedef _ExtractNative = Pointer<Utf8> Function(
-    Pointer<Utf8> chdPath, Pointer<Utf8> outputDir, Int32 splitBin);
+  Pointer<Utf8> chdPath, Pointer<Utf8> outputDir, Int32 splitBin, Int32 cueStyle);
 typedef _CompressNative = Pointer<Utf8> Function(
     Pointer<Utf8> inputPath, Pointer<Utf8> outputPath, Pointer<Utf8> codec,
-    Int32 hunkSize, Int32 unitSize, Int32 threads);
+  Int32 hunkSize, Int32 unitSize, Int32 threads, Int32 cueStyle);
 typedef _FreeNative = Void Function(Pointer<Utf8> ptr);
 typedef _CancelNative = Void Function();
 typedef _VersionNative = Pointer<Utf8> Function();
@@ -39,10 +39,10 @@ typedef _ReadDart = Pointer<Utf8> Function(Pointer<Utf8> chdPath);
 typedef _HashDart = Pointer<Utf8> Function(
     Pointer<Utf8> chdPath, Pointer<Utf8> algorithms);
 typedef _ExtractDart = Pointer<Utf8> Function(
-    Pointer<Utf8> chdPath, Pointer<Utf8> outputDir, int splitBin);
+  Pointer<Utf8> chdPath, Pointer<Utf8> outputDir, int splitBin, int cueStyle);
 typedef _CompressDart = Pointer<Utf8> Function(
     Pointer<Utf8> inputPath, Pointer<Utf8> outputPath, Pointer<Utf8> codec,
-    int hunkSize, int unitSize, int threads);
+  int hunkSize, int unitSize, int threads, int cueStyle);
 typedef _FreeDart = void Function(Pointer<Utf8> ptr);
 typedef _CancelDart = void Function();
 typedef _VersionDart = Pointer<Utf8> Function();
@@ -156,11 +156,11 @@ class ChdliteFfi {
   }
 
   /// Extract CHD to CUE/BIN. Returns JSON string.
-  String? extract(String chdPath, String outputDir, bool splitBin) {
+  String? extract(String chdPath, String outputDir, bool splitBin, int cueStyle) {
     if (!_loaded) return null;
     final pathPtr = chdPath.toNativeUtf8();
     final dirPtr = outputDir.toNativeUtf8();
-    final resultPtr = _extract(pathPtr, dirPtr, splitBin ? 1 : 0);
+    final resultPtr = _extract(pathPtr, dirPtr, splitBin ? 1 : 0, cueStyle);
     malloc.free(pathPtr);
     malloc.free(dirPtr);
     if (resultPtr == nullptr) return null;
@@ -171,13 +171,13 @@ class ChdliteFfi {
 
   /// Compress input to CHD. Returns JSON string.
   String? compress(String inputPath, String outputPath, String codec,
-      int hunkSize, int unitSize, int threads) {
+      int hunkSize, int unitSize, int threads, int cueStyle) {
     if (!_loaded) return null;
     final inPtr = inputPath.toNativeUtf8();
     final outPtr = outputPath.toNativeUtf8();
     final codecPtr = codec.toNativeUtf8();
     final resultPtr =
-        _compress(inPtr, outPtr, codecPtr, hunkSize, unitSize, threads);
+      _compress(inPtr, outPtr, codecPtr, hunkSize, unitSize, threads, cueStyle);
     malloc.free(inPtr);
     malloc.free(outPtr);
     malloc.free(codecPtr);

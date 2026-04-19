@@ -129,7 +129,8 @@ class OperationHandler {
         case 'extract':
           final outputDir = (request.options['output_dir'] as String?) ?? '';
           final splitBin = (request.options['split_bin'] as bool?) ?? true;
-          json = ffi.extract(path, outputDir, splitBin);
+          final cueStyle = (request.options['cue_style'] as int?) ?? 0;
+          json = ffi.extract(path, outputDir, splitBin, cueStyle);
 
         case 'compress':
           final outputPath = (request.options['output_path'] as String?) ?? '';
@@ -137,7 +138,8 @@ class OperationHandler {
           final hunkSize = (request.options['hunk_size'] as int?) ?? 0;
           final unitSize = (request.options['unit_size'] as int?) ?? 0;
           final threads = (request.options['threads'] as int?) ?? 0;
-          json = ffi.compress(path, outputPath, codec, hunkSize, unitSize, threads);
+          final cueStyle = (request.options['cue_style'] as int?) ?? 0;
+          json = ffi.compress(path, outputPath, codec, hunkSize, unitSize, threads, cueStyle);
       }
 
       if (json == null) {

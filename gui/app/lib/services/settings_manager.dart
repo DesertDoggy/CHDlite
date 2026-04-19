@@ -25,10 +25,11 @@ class SettingsManager {
       _data['hash.algorithms'] = ['sha1'];
       _data['hash.output_format'] = 'text';
       _data['compress.codec'] = 'zstd';
-      _data['compress.hunk_size'] = '65536';
-      _data['compress.unit_size'] = '2048';
+      _data['compress.hunk_size'] = '0';
+      _data['compress.unit_size'] = '0';
       _data['compress.threads'] = '0';
       _data['extract.split_bin'] = true;
+      _data['extract.cue_style'] = 'chdman';
       _data['result.format'] = 'text';
     }
   }

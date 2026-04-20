@@ -14,7 +14,7 @@ This project incorporates code and concepts from the following open-source proje
 
 - **[MAME](https://github.com/mamedev/mame)** — CHD/cdhman core library and codec implementations (BSD-3-Clause)
 - **[chdman-simd](https://github.com/grouik1er-coder/chdman-simd)** — SIMD-optimized codec improvements (BSD-2-Clause)
-- **[7-Zip](https://github.com/ip7z/7zip)** — LZMA ASM decoder (x86-64) (BSD-3-Clause)
+- **[7-Zip](https://github.com/ip7z/7zip)** — LZMA ASM decoder (x86-64) (LGPL2.1)
 
 
 ## License
